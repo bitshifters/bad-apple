@@ -1,0 +1,1435 @@
+\ ******************************************************************
+\ * Bad Apple
+\ * Video player in MODE 7
+\ * Kieran Connell & Simon Morris
+\ ******************************************************************
+
+
+\ ******************************************************************
+\ *	Define OS entries (could be INCLUDE bbc_os.h)
+\ ******************************************************************
+
+osfile = &FFDD
+oswrch = &FFEE
+osasci = &FFE3
+osbyte = &FFF4
+osword = &FFF1
+osfind = &FFCE
+osgbpb = &FFD1
+
+argv = &F2
+
+EVENTV = &0220
+
+INKEY_esc = 112
+INKEY_q = 16
+
+SEI_OP = $78
+CLI_OP = $58
+NOP_OP = $ea
+
+
+\ ******************************************************************
+\ *	Define debug flags
+\ ******************************************************************
+
+_DEBUG = TRUE
+_WAIT_KEYPRESS = FALSE				; could implement play/pause/step
+_ENABLE_EVENTS = TRUE
+_ENABLE_WALLCLOCK = TRUE
+_COUNT_DECRUNCHES = FALSE
+_TRY_TO_MATCH_FRAMERATE = FALSE
+_CHECK_LOAD_BUFFER = FALSE
+
+\ ******************************************************************
+\ *	Define macros
+\ ******************************************************************
+
+MACRO WAIT_FOR_KEYPRESS key
+{
+	.wait_for_keypress
+	LDA #key:STA &FE4F:LDA &FE4F:BPL wait_for_keypress
+}
+ENDMACRO
+
+\ ******************************************************************
+\ *	Define global constants
+\ ******************************************************************
+
+\\ EXOMISER (compression library)
+EXO_buffer_len = 4096
+
+\\ MODE 7
+MODE7_base_addr = &7C00
+MODE7_char_width = 40
+MODE7_char_height = 25
+MODE7_screen_size = (MODE7_char_width * MODE7_char_height)
+
+MODE7_texel_width = (MODE7_char_width - 2) * 2
+MODE7_texel_height = MODE7_char_height * 3
+
+MODE7_alpha_black = 128
+MODE7_graphic_black = 144
+MODE7_contiguous = 153
+MODE7_separated = 154
+
+
+\ ******************************************************************
+\ *	Define app constants
+\ ******************************************************************
+
+VID_default_mode7_ypos = 3
+VID_default_frame_height = 19		; 14 = Grav
+VID_default_frame_size = (MODE7_char_width * VID_default_frame_height)
+VID_default_frame_addr = MODE7_base_addr + (VID_default_mode7_ypos * MODE7_char_width)
+
+DFS_track_size = (10 * 256)
+
+DISK2_drive_no = 2			; should be 2
+DISK1_first_track = 1
+DISK1_last_track = 79		; could potentially deduce these from DFS catalog
+DISK2_first_track = 1
+DISK2_last_track = 79		; doesn't actually matter as data stream should indicate end of buffer
+
+STREAM_buffer_size = (4 * DFS_track_size)
+
+\ ******************************************************************
+\ *	Define fast (zero page) runtime variables
+\ ******************************************************************
+
+\\ EXOMISER (compression library)
+EXO_zp_src_hi = $70
+EXO_zp_src_lo = EXO_zp_src_hi + 1
+EXO_zp_src_bi = EXO_zp_src_hi + 2
+EXO_zp_bitbuf = EXO_zp_src_hi + 3
+
+EXO_zp_len_lo  = $74
+EXO_zp_len_hi  = EXO_zp_len_lo + 1
+
+EXO_zp_bits_lo = $76
+EXO_zp_bits_hi = EXO_zp_bits_lo + 1
+
+EXO_zp_dest_hi = $78
+EXO_zp_dest_lo = EXO_zp_dest_hi + 1	; dest addr lo
+EXO_zp_dest_bi = EXO_zp_dest_hi + 2	; dest addr hi
+
+\\ Our own app variables
+ORG &7B
+GUARD &9F
+
+\\ System vars
+.old_eventv				SKIP 2
+
+.writeptr				SKIP 2
+
+.num_deltas				SKIP 2
+.packed_delta			SKIP 2
+.shifted_bit			SKIP 1
+.frame_no				SKIP 2
+.error_flag				SKIP 1
+.vsync_count			SKIP 1
+.decode_lock			SKIP 1
+.track_no				SKIP 1
+.load_to_HI				SKIP 1
+
+IF _ENABLE_WALLCLOCK
+.clock_vsync			SKIP 1
+.clock_secs				SKIP 1
+ENDIF
+
+IF _WAIT_KEYPRESS
+.key_held				SKIP 1
+ENDIF
+
+IF _DEBUG
+.debugptr				SKIP 2
+ENDIF
+
+IF _COUNT_DECRUNCHES
+.decrunch_count			SKIP 2
+ENDIF
+
+\ ******************************************************************
+\ *	Start address to be saved
+\ ******************************************************************
+
+ORG &1900	      					; code origin - assume standard BBC Micro
+GUARD &7C00							; ensure code size doesn't hit start of screen memory
+
+.start
+
+
+\ ******************************************************************
+\ *	Code entry
+\ ******************************************************************
+
+\ ******************************************************************
+\ *	Main loop including high-level state machine
+\ ******************************************************************
+
+.main
+{
+\\ Determine command line params
+
+	JSR cmd_line_params
+
+\\ ***** System initialise ***** \\
+
+	\\ Set MODE 7
+	LDA #22: JSR oswrch
+	LDA #7: JSR oswrch
+
+	\\ Must be a simpler way to turn off cursor than this!!
+	LDA #23: JSR oswrch
+	LDA #1: JSR oswrch
+	LDA #0: JSR oswrch
+	LDA #0: JSR oswrch
+	LDA #0: JSR oswrch
+	LDA #0: JSR oswrch
+	LDA #0: JSR oswrch
+	LDA #0: JSR oswrch
+	LDA #0: JSR oswrch
+	LDA #0: JSR oswrch
+
+	\\ Set gfx mode
+	JSR teletexel_init
+
+	\\ Zero our variables
+	LDA #0
+	STA frame_no
+	STA frame_no+1
+	STA error_flag
+	STA decode_lock
+
+	IF _ENABLE_WALLCLOCK
+	STA clock_secs
+	ENDIF
+	IF _COUNT_DECRUNCHES
+	STA decrunch_count
+	STA decrunch_count+1
+	ENDIF
+
+	LDA #&FF
+	STA vsync_count
+	IF _ENABLE_WALLCLOCK
+	STA clock_vsync
+	ENDIF
+
+	\\ Load our entire stream buffer from first track
+
+	LDA #DISK1_first_track
+	STA track_no
+
+	LDA #HI(STREAM_buffer_start)
+	STA load_to_HI
+
+	\\ Fill entire buffer
+	{
+		.loop
+		JSR load_next_track
+		
+		LDA error_flag
+		BNE read_error
+	
+		LDA load_to_HI
+		CMP #HI(STREAM_buffer_start)			; wrapped means buffer filled
+		BNE loop
+	}
+
+	JMP read_success
+
+	.read_error
+	JMP return
+
+	.read_success
+
+	\\ Start decompressor
+	LDX #LO(STREAM_buffer_start - 1)
+	LDY #HI(STREAM_buffer_start - 1)
+	JSR init_decruncher
+
+	\\ Decode stream header
+	JSR get_decrunched_byte		; frame_size_LO
+	BCS read_error
+
+	\\ Calculate frame_end address
+	ADC VID_frame_start
+	STA VID_frame_end
+	PHP
+
+	JSR get_decrunched_byte		; frame_size_HI
+	BCS read_error
+	PLP
+
+	ADC VID_frame_start+1
+	STA VID_frame_end+1
+
+	IF _ENABLE_EVENTS
+	LDX #LO(decode_eventv)
+	LDY #HI(decode_eventv)
+	JSR start_eventv
+	ENDIF
+
+	\\ Top of our loop
+	.next_frame
+
+	\\ Wait vsync
+	LDA #19
+	JSR osbyte
+
+	IF _ENABLE_EVENTS = FALSE
+	\\ Increment frame counter
+	{
+		INC frame_no
+		BNE no_carry
+		INC frame_no+1
+		.no_carry
+	}
+
+	\\ Decode frame header
+	JSR decode_frame_header
+	BCS read_error
+	ENDIF
+
+	IF _DEBUG
+	JSR write_debug_info
+	ENDIF
+
+	IF _ENABLE_EVENTS = FALSE
+	IF _WAIT_KEYPRESS
+	{
+		.no_key_pressed
+
+		\\ Check for pressed keys
+		LDA #121
+		LDX #&10
+		JSR osbyte
+
+		\\ Still holding same key
+		CPX key_held
+		BEQ no_key_pressed
+
+		\\ Remember current key
+		STX key_held
+
+		\\ Any key pressed?
+		CPX #&FF
+		BEQ no_key_pressed
+	}
+	ENDIF
+
+	\\ Decode our video frame
+	JSR decode_frame_data
+	BCS read_error
+	ENDIF
+
+	\\ Load more data if needed
+
+	\\ Which page are we reading crunched data from?
+	SEC
+	LDA EXO_crunch_byte_hi
+
+	\\ Is it more than a "track" away?
+	SBC load_to_HI
+	CMP #HI(DFS_track_size)
+	BCC not_ready_to_load
+
+	\\ If so, load a track's worth of data into our buffer
+	JSR load_next_track
+
+	.not_ready_to_load
+	\\ Check for errors
+	LDA error_flag
+	BNE track_load_error
+
+	JMP next_frame
+
+	.track_load_error
+	IF _ENABLE_EVENTS
+	JSR stop_eventv
+	ENDIF
+
+	\\ Exit cleanly (we hope)
+	.return
+	RTS
+}
+
+\\ <drive no disk 1> <drive no disk 2> <screen y pos> <frame height>
+\\ Returns number in A but only valid if carry clear
+
+.cmd_line_get_number
+{
+	\\ Skip whitespace
+
+	.skip_whitespace
+	LDA (argv),Y
+	INY
+	CMP #' '
+	BEQ skip_whitespace
+
+	\\ Check end of string
+	CMP #13
+	BEQ return
+
+	\\ Check less than '0'
+	CMP #'0'
+	BCC return
+
+	\\ Check greater than '9'
+	CMP #'9'+1
+	BCS return
+
+	\\ Is a number, subtract ASCII '0'
+	SEC
+	SBC #'0'
+	TAX
+
+	\\ Next digit
+	LDA (argv),Y
+
+	\\ Check less than '0'
+	CMP #'0'
+	BCC no_digit
+
+	\\ Check greater than '9'
+	CMP #'9'+1
+	BCS no_digit
+	
+	INY
+
+	\\ Second digit
+	SEC
+	SBC #'0'
+	STA add_digit+1
+
+	\\ Add 10's
+	LDA #0
+	CPX #0
+	BEQ add_digit
+	CLC
+	.loop10
+	ADC #10
+	DEX
+	BNE loop10
+
+	\\ A now contains first digit*10
+	.add_digit
+	ADC #0				; ** SELF-MODIFIED **
+	EQUB &2C			; BIT immediate - skips next two instructions
+
+	.no_digit
+	TXA
+	CLC
+	RTS	
+
+	.return
+	SEC
+	RTS
+}
+
+.cmd_line_params
+{
+	\\ Y pre-initialised
+
+	.get_disk1
+	JSR cmd_line_get_number
+	BCS get_disk2
+	CMP #4
+	BCS get_disk2
+	STA osword_params_drive
+
+	.get_disk2
+	JSR cmd_line_get_number
+	BCS get_ypos
+	CMP #4
+	BCS get_ypos
+	STA TRACK_LOAD_disk_2+1
+
+	.get_ypos
+	JSR cmd_line_get_number
+	BCS return
+	CMP #25
+	BCS return
+	TAX
+
+	\\ Calculate frame start
+	CLC
+	LDA #LO(MODE7_base_addr)
+	ADC mode7_char_width_LO,X
+	STA VID_frame_start
+	LDA #HI(MODE7_base_addr)
+	ADC mode7_char_width_HI,X
+	STA VID_frame_start+1
+
+	.return
+	RTS
+}
+
+
+
+
+\ ******************************************************************
+\ *	Debug on screen
+\ ******************************************************************
+
+IF _DEBUG
+.write_debug_info
+{
+	\\ Reset our write ptr
+	LDA #LO(MODE7_base_addr)
+	STA debugptr
+	LDA #HI(MODE7_base_addr)
+	STA debugptr+1
+
+	\\ Write debug info to screen
+	LDY #0
+	LDA frame_no+1
+	JSR debug_write_hex
+	LDA frame_no
+	JSR debug_write_hex
+
+	INY
+	LDA EXO_crunch_byte_hi
+	JSR debug_write_hex
+	LDA EXO_crunch_byte_lo
+	JSR debug_write_hex
+
+	IF _COUNT_DECRUNCHES
+	INY
+	LDA decrunch_count+1
+	JSR debug_write_hex
+	LDA decrunch_count
+	JSR debug_write_hex
+	ENDIF
+
+	INY
+	CLC
+	LDA osword_params_drive
+	ADC #'0'
+	STA (debugptr),Y
+	INY
+	LDA #'/'
+	STA (debugptr),Y
+	INY
+	LDA track_no
+	JSR debug_write_hex
+
+	INY
+	LDA load_to_HI
+	JSR debug_write_hex
+	LDA #0
+	JSR debug_write_hex
+
+	INY
+	IF _ENABLE_EVENTS
+	LDA vsync_count
+	JSR debug_write_hex
+	ELSE
+	LDA num_deltas+1
+	JSR debug_write_hex
+	LDA num_deltas
+	JSR debug_write_hex
+	ENDIF
+
+	IF _ENABLE_WALLCLOCK
+	INY
+	LDA clock_secs
+	JSR debug_write_time
+	ENDIF
+
+	.return
+	RTS
+}
+ENDIF
+
+\ ******************************************************************
+\ *	Video stream decode routines
+\ ******************************************************************
+
+.decode_frame_header
+{
+	\\ Get number of deltas in frame (16-bits)
+	JSR get_decrunched_byte
+	BCS return
+	STA num_deltas
+
+	JSR get_decrunched_byte
+	BCS return
+	STA num_deltas+1
+
+	\\ Reset our write ptr
+	LDA VID_frame_start			; #LO(VID_frame_addr)
+	STA writeptr
+	LDA VID_frame_start+1		; #HI(VID_frame_addr)
+	STA writeptr+1
+
+	.return
+	RTS
+}
+
+.decode_entire_frame
+{
+	\\ Write entire frame (<=1000 bytes)
+	.loop
+	JSR get_decrunched_byte
+	BCS return				; read error
+	LDY #0					; this was missing?!
+	STA (writeptr),Y
+
+	INC writeptr
+	BNE no_carry
+	INC writeptr+1
+	.no_carry
+
+	LDA writeptr
+	CMP VID_frame_end		; #LO(VID_frame_addr + VID_frame_size)
+	BNE loop
+	LDA writeptr+1
+	CMP VID_frame_end+1		; #HI(VID_frame_addr + VID_frame_size)
+	BNE loop
+
+	CLC						; no read error
+
+	.return
+	RTS
+}
+
+.decode_frame_data
+{
+	\\ Check if this is a special frame before we start
+	LDA num_deltas+1
+	CMP #&FF
+	BEQ special_frame
+
+	\\ Regular frame (deltas)
+
+	.loop
+	\\ Check if we're done
+	LDA num_deltas
+	BNE not_zero
+	LDA num_deltas+1
+	BNE not_zero
+
+	\\  Zero deltas left
+	CLC
+	RTS
+
+	.not_zero
+	\\ Get packed 16-bit delta
+	JSR get_decrunched_byte
+	BCS return
+	STA packed_delta
+
+	JSR get_decrunched_byte
+	BCS return
+	STA packed_delta+1
+
+	\\ Decode offset (10 bits)
+	CLC
+	LDA packed_delta
+	ADC writeptr
+	STA writeptr
+
+	LDA packed_delta+1
+	AND #&3						; only need bottom 2 bits
+	ADC writeptr+1
+	STA writeptr+1
+
+	\\ Decode pixels into MODE 7 byte (6 bits)
+	\\ 00X1 1111
+	\\ 0X01 1111
+	\\ 0X11 1111
+
+	LDA packed_delta+1
+	AND #128					; top bit 7
+	LSR A						; shift down to bit 6
+	STA shifted_bit
+
+	LDA packed_delta+1	
+	LSR A
+	LSR A						; shift down twice
+	ORA #32						; always need 32 for MODE 7
+	ORA shifted_bit				; mask in bit 6
+
+	\\ Write to screen! (do this without indirect write?)
+	LDY #0
+	STA (writeptr),Y
+
+	\\ Decrement delta count
+	SEC
+	LDA num_deltas
+	SBC #1
+	STA num_deltas
+	LDA num_deltas+1
+	SBC #0
+	STA num_deltas+1
+
+	\\ Next delta
+	JMP loop
+
+	.special_frame
+	LDA num_deltas
+	BEQ full_frame					; &FFFF indicates end of stream
+
+	\\ End of stream
+	INC error_flag
+	BNE return
+
+	\\ Write entire frame (<=1000 bytes)
+	.full_frame
+	JSR decode_entire_frame
+
+	.return
+	RTS
+}
+
+\ ******************************************************************
+\ *	File loading routines
+\ ******************************************************************
+
+.load_next_track
+\\{
+	\\ Track &FF indicates no more reading
+	LDA track_no
+	BMI TRACK_LOAD_return
+
+	\\ Store track no in params block
+	STA osword_params_track
+
+	\\ Update load address in params block
+	LDA load_to_HI
+	STA osword_params_address+1
+	
+	\\ Make DFS read multi-sector call
+	LDX #LO(osword_params)
+	LDY #HI(osword_params)
+	LDA #&7F
+	JSR osword
+
+	\\ Error value returned at end of params block
+	LDA osword_params_return
+	STA error_flag
+
+	\\ Next track
+	INC track_no
+
+	\\ Which disk?
+	LDA osword_params_drive
+	BEQ TRACK_LOAD_disk_1							; assumes we start on drive 0
+
+	\\ Disk 2
+	LDA track_no
+	CMP #DISK2_last_track
+	BNE TRACK_LOAD_no_swap_disk
+
+	\\ Reached end of disk 2
+	LDA #&FF
+	STA track_no
+	BNE TRACK_LOAD_no_wrap				; and store &FF in load_to_HI
+
+	\\ Disk 1
+	.TRACK_LOAD_disk_1
+	LDA track_no
+	CMP #DISK1_last_track
+	BNE TRACK_LOAD_no_swap_disk
+
+	\\ Reached end of disk 1 so swap drives
+	.TRACK_LOAD_disk_2
+	LDA #DISK2_drive_no
+	STA osword_params_drive
+
+	\\ Reset track to start of disk 2
+	LDA #DISK2_first_track
+	STA track_no
+
+	.TRACK_LOAD_no_swap_disk
+
+	\\ Increment our load ptr
+	CLC
+	LDA load_to_HI
+	ADC #HI(DFS_track_size)
+
+	\\ Have we fallen off the end of the buffer?
+	CMP #HI(STREAM_buffer_end)
+	BNE TRACK_LOAD_no_wrap
+
+	\\ If so then reset to start
+	LDA #HI(STREAM_buffer_start)
+
+	.TRACK_LOAD_no_wrap
+	STA load_to_HI
+
+	.TRACK_LOAD_return
+	RTS
+\\}
+
+\ ******************************************************************
+\ *	Event driven main loop
+\ ******************************************************************
+
+.decode_eventv
+{
+	php
+	cmp #4
+	beq vsync
+	JMP not_vsync
+
+	.vsync
+	INC vsync_count
+
+	\\ Preserve registers
+	pha
+
+	\\ If we're already busy just exit function
+	LDA decode_lock
+	BNE early_out
+
+	\\ If we're ahead of video frame rate early out
+	IF _TRY_TO_MATCH_FRAMERATE
+	LDA vsync_count
+	BMI early_out
+	ENDIF
+
+	\\ Set a lock on our decode function
+	INC decode_lock
+	
+	TXA:PHA:TYA:PHA
+
+	\\ Increment frame counter
+	{
+		INC frame_no
+		BNE no_carry
+		INC frame_no+1
+		.no_carry
+	}
+
+	\\ Decode frame header
+	JSR decode_frame_header
+	BCS read_error
+
+	\\ Decode the video frame
+	JSR decode_frame_data
+	BCS read_error
+
+	\\ Indicate our frame rate
+	DEC vsync_count
+	IF _TRY_TO_MATCH_FRAMERATE
+	DEC vsync_count
+	ENDIF
+
+	\\ Release our lock
+	DEC decode_lock
+	BEQ return
+
+	\\ Indicate read error
+	.read_error
+	INC error_flag
+
+	\\ Restore registers
+	.return
+	PLA:TAY:PLA:TAX
+	
+	.early_out
+
+	IF _ENABLE_WALLCLOCK
+	\\ Increment wall clock
+	CLC
+	LDA clock_vsync
+	ADC #1
+	CMP #50
+	BCC no_secs
+	INC clock_secs
+	SBC #50
+	.no_secs
+	STA clock_vsync
+	ENDIF
+
+	pla
+
+	\\ Return
+    .not_vsync
+	plp
+	rts
+}
+
+
+\ ******************************************************************
+\ *	Set up MODE 7 screen
+\ ******************************************************************
+
+.teletexel_init						; set blank screen
+{
+	\\ Reset our write ptr
+	LDA #LO(MODE7_base_addr)
+	STA writeptr
+	LDA #HI(MODE7_base_addr)
+	STA writeptr+1
+
+	LDY #0
+	.loop
+	LDA #MODE7_graphic_black + 7	; white
+	STA (writeptr),Y
+
+	\\ 2nd column here
+
+	CLC
+	LDA writeptr
+	ADC #MODE7_char_width
+	STA writeptr
+	LDA writeptr+1
+	ADC #0
+	STA writeptr+1
+
+	LDA writeptr
+	CMP #LO(MODE7_base_addr + MODE7_screen_size)
+	BNE loop
+	LDA writeptr+1
+	CMP #HI(MODE7_base_addr + MODE7_screen_size)
+	BNE loop
+
+	.return
+	RTS
+}
+
+
+\ ******************************************************************
+\ *	Event Vector Routines
+\ ******************************************************************
+
+.start_eventv				; new event handler in X,Y
+{
+	\\ Set new Event handler
+	sei
+	LDA EVENTV
+	STA old_eventv
+	LDA EVENTV+1
+	STA old_eventv+1
+
+	stx EVENTV
+	sty EVENTV+1
+	cli
+	
+	\\ Enable VSYNC event.
+	lda #14
+	ldx #4
+	jsr osbyte
+	rts
+}
+	
+.stop_eventv
+{
+	\\ Disable VSYNC event.
+	lda #13
+	ldx #4
+	jsr osbyte
+
+	\\ Reset old Event handler
+	SEI
+	LDA old_eventv
+	STA EVENTV
+	LDA old_eventv+1
+	STA EVENTV+1
+	CLI 
+
+	rts
+}
+
+
+\ ******************************************************************
+\ *	Debug helpers
+\ ******************************************************************
+
+IF _DEBUG
+.debug_hexchars
+EQUS "0123456789abcdef"
+
+.debug_write_hex					; write A at (writeptr),Y
+{
+	PHA
+	LSR A:LSR A:LSR A:LSR A
+	TAX
+	LDA debug_hexchars,X
+	STA (debugptr),Y
+	INY
+	PLA
+	AND #&0F
+	TAX
+	LDA debug_hexchars,X
+	STA (debugptr),Y
+	INY
+	RTS
+}
+
+IF _ENABLE_WALLCLOCK
+.debug_write_time					; write A at (writeptr),Y
+{
+	\\ Count sixties
+	LDX #0
+	.loop_60
+	CMP #60
+	BCC done_60
+	SEC
+	SBC #60
+	INX
+	JMP loop_60
+	.done_60
+	PHA
+	TXA
+	\\ Write  sixties
+	TXA
+	ADC #'0'
+	STA (debugptr),Y
+	INY
+
+	LDA #':'
+	STA (debugptr),Y
+	INY
+	PLA
+
+	\\ Count tens
+	LDX #0
+	.loop_10
+	CMP #10
+	BCC done_10
+	SEC
+	SBC #10
+	INX
+	JMP loop_10
+	.done_10
+	PHA
+
+	\\ Write  tens
+	TXA
+	ADC #'0'
+	STA (debugptr),Y
+	INY
+
+	\\ Write units
+	PLA	
+	ADC #'0'
+	STA (debugptr),Y
+	INY
+
+	RTS
+}
+ENDIF
+
+.debug_print_A				; trashes X
+{
+	PHA:PHA
+	LSR A:LSR A:LSR A:LSR A
+	TAX
+	LDA debug_hexchars,X
+	JSR oswrch
+	PLA
+	AND #&0F
+	TAX
+	LDA debug_hexchars,X
+	JSR oswrch
+	LDA #32
+	JSR oswrch
+	PLA
+	RTS
+}
+ENDIF
+
+
+\ ******************************************************************
+\ *	Exomiser (decompression library)
+\ ******************************************************************
+
+; -------------------------------------------------------------------
+; for this get_crunched_byte routine to work the crunched data has to be
+; crunced using the -m <buffersize> and possibly the -l flags. Any other
+; flag will just mess things up.
+
+\\ ****
+\\ THIS FUNCTION MUST PRESERVE STATUS FLAGS AND X & Y REGISTERS!
+\\ ****
+.get_crunched_byte
+\\{
+	PHP
+
+	INC EXO_crunch_byte_lo
+	bne EXO_byte_skip_hi
+	INC EXO_crunch_byte_hi			; forward decrunch
+.EXO_byte_skip_hi
+
+	IF _CHECK_LOAD_BUFFER
+	\\ Are we reading from the same page we intend to load at next?
+	LDA EXO_crunch_byte_hi
+	CMP load_to_HI
+	BNE not_caught_up
+
+	\\ If so then we have caught up with the disk load and run out of data
+	\\ So bomb out with an error:
+	INC error_flag
+	LDA #0
+	PLP
+	RTS
+
+	.not_caught_up
+	ENDIF
+
+	\\ Have we gone over the end of our stream buffer?
+	LDA EXO_crunch_byte_hi
+	CMP #HI(STREAM_buffer_end)
+	BNE EXO_load_crunch_byte
+
+	\\ If so then wrap around to the beginning
+	LDA #LO(STREAM_buffer_start)
+	STA EXO_crunch_byte_lo
+	LDA #HI(STREAM_buffer_start)
+	STA EXO_crunch_byte_hi
+
+.EXO_load_crunch_byte
+	lda STREAM_buffer_start-1	; **SELF-MODIFIED CODE**
+EXO_crunch_byte_lo = EXO_load_crunch_byte + 1
+EXO_crunch_byte_hi = EXO_load_crunch_byte + 2
+
+	PLP
+	rts						; decrunch_file is called.
+\\}
+; -------------------------------------------------------------------
+
+; -------------------------------------------------------------------
+; jsr this label to init the decruncher, it will init used zeropage
+; zero page locations and the decrunch tables
+; no constraints on register content, however the
+; decimal flag has to be #0 (it almost always is, otherwise do a cld)
+; -------------------------------------------------------------------
+.init_decruncher				; pass in address of (crunched data-1) in X,Y
+{
+	STX EXO_crunch_byte_lo
+	STY EXO_crunch_byte_hi
+
+	jsr get_crunched_byte
+	sta EXO_zp_bitbuf
+
+	ldx #0
+	stx EXO_zp_dest_lo
+	stx EXO_zp_dest_hi
+	stx EXO_zp_len_lo
+	stx EXO_zp_len_hi
+	ldy #0
+; -------------------------------------------------------------------
+; calculate tables (49 bytes)
+; x and y must be #0 when entering
+;
+._init_nextone
+	inx
+	tya
+	and #$0f
+	beq _init_shortcut		; starta på ny sekvens
+
+	txa			; this clears reg a
+	lsr a			; and sets the carry flag
+	ldx EXO_zp_bits_lo
+._init_rolle
+	rol a
+	rol EXO_zp_bits_hi
+	dex
+	bpl _init_rolle		; c = 0 after this (rol EXO_zp_bits_hi)
+
+	adc tabl_lo-1,y
+	tax
+
+	lda EXO_zp_bits_hi
+	adc tabl_hi-1,y
+._init_shortcut
+	sta tabl_hi,y
+	txa
+	sta tabl_lo,y
+
+	ldx #4
+	jsr _bit_get_bits		; clears x-reg.
+	sta tabl_bi,y
+	iny
+	cpy #52
+	bne _init_nextone
+}
+\\ Fall through!	
+
+._do_exit
+	rts
+
+; -------------------------------------------------------------------
+; decrunch one byte
+;
+.get_decrunched_byte
+{
+	IF _COUNT_DECRUNCHES
+	{
+		INC decrunch_count
+		BNE no_carry
+		INC decrunch_count+1
+		.no_carry
+	}
+	ENDIF
+
+	ldy EXO_zp_len_lo
+	bne _do_sequence
+	ldx EXO_zp_len_hi
+	bne _do_sequence2
+
+	jsr _bit_get_bit1
+	beq _get_sequence
+; -------------------------------------------------------------------
+; literal handling (13 bytes)
+;
+	jsr get_crunched_byte
+	bcc _do_literal
+; -------------------------------------------------------------------
+; count zero bits + 1 to get length table index (10 bytes)
+; y = x = 0 when entering
+;
+._get_sequence
+._seq_next1
+	iny
+	jsr _bit_get_bit1
+	beq _seq_next1
+	cpy #$11
+	bcs _do_exit
+; -------------------------------------------------------------------
+; calulate length of sequence (zp_len) (17 bytes)
+;
+	ldx tabl_bi - 1,y
+	jsr _bit_get_bits
+	adc tabl_lo - 1,y
+	sta EXO_zp_len_lo
+	lda EXO_zp_bits_hi
+	adc tabl_hi - 1,y
+	sta EXO_zp_len_hi
+; -------------------------------------------------------------------
+; here we decide what offset table to use (20 bytes)
+; x is 0 here
+;
+	bne _seq_nots123
+	ldy EXO_zp_len_lo
+	cpy #$04
+	bcc _seq_size123
+._seq_nots123
+	ldy #$03
+._seq_size123
+	ldx tabl_bit - 1,y
+	jsr _bit_get_bits
+	adc tabl_off - 1,y
+	tay
+; -------------------------------------------------------------------
+; calulate absolute offset (zp_src) (27 bytes)
+;
+	ldx tabl_bi,y
+	jsr _bit_get_bits;
+	adc tabl_lo,y
+	bcc _seq_skipcarry
+	inc EXO_zp_bits_hi
+	clc
+._seq_skipcarry
+	adc EXO_zp_dest_lo
+	sta EXO_zp_src_lo
+	lda EXO_zp_bits_hi
+	adc tabl_hi,y
+	adc EXO_zp_dest_hi
+; -------------------------------------------------------------------
+	cmp #HI(EXO_buffer_len)
+	bcc _seq_offset_ok
+	sbc #HI(EXO_buffer_len)
+	clc
+; -------------------------------------------------------------------
+._seq_offset_ok
+	sta EXO_zp_src_hi
+	adc #HI(EXO_buffer_start)
+	sta EXO_zp_src_bi
+._do_sequence
+	ldy #0
+._do_sequence2
+	ldx EXO_zp_len_lo
+	bne _seq_len_dec_lo
+	dec EXO_zp_len_hi
+._seq_len_dec_lo
+	dec EXO_zp_len_lo
+; -------------------------------------------------------------------
+	ldx EXO_zp_src_lo
+	bne _seq_src_dec_lo
+	ldx EXO_zp_src_hi
+	bne _seq_src_dec_hi
+; ------- handle buffer wrap problematics here ----------------------
+	ldx #HI(EXO_buffer_len)
+	stx EXO_zp_src_hi
+	ldx #HI(EXO_buffer_end)
+	stx EXO_zp_src_bi
+; -------------------------------------------------------------------
+._seq_src_dec_hi
+	dec EXO_zp_src_hi
+	dec EXO_zp_src_bi
+._seq_src_dec_lo
+	dec EXO_zp_src_lo
+; -------------------------------------------------------------------
+	lda (EXO_zp_src_lo),y
+; -------------------------------------------------------------------
+._do_literal
+	ldx EXO_zp_dest_lo
+	bne _seq_dest_dec_lo
+	ldx EXO_zp_dest_hi
+	bne _seq_dest_dec_hi
+; ------- handle buffer wrap problematics here ----------------------
+	ldx #HI(EXO_buffer_len)
+	stx EXO_zp_dest_hi
+	ldx #HI(EXO_buffer_end)
+	stx EXO_zp_dest_bi
+; -------------------------------------------------------------------
+._seq_dest_dec_hi
+	dec EXO_zp_dest_hi
+	dec EXO_zp_dest_bi
+._seq_dest_dec_lo
+	dec EXO_zp_dest_lo
+; -------------------------------------------------------------------
+	sta (EXO_zp_dest_lo),y
+	clc
+	rts
+}
+
+; -------------------------------------------------------------------
+; two small static tables (6 bytes)
+;
+.tabl_bit
+{
+	EQUB 2,4,4
+}
+.tabl_off
+{
+	EQUB 48,32,16
+}
+
+; -------------------------------------------------------------------
+; get x + 1 bits (1 byte)
+;
+._bit_get_bit1
+	inx
+; -------------------------------------------------------------------
+; get bits (31 bytes)
+;
+; args:
+;   x = number of bits to get
+; returns:
+;   a = #bits_lo
+;   x = #0
+;   c = 0
+;   EXO_zp_bits_lo = #bits_lo
+;   EXO_zp_bits_hi = #bits_hi
+; notes:
+;   y is untouched
+;   other status bits are set to (a == #0)
+; -------------------------------------------------------------------
+._bit_get_bits
+{
+	lda #$00
+	sta EXO_zp_bits_lo
+	sta EXO_zp_bits_hi
+	cpx #$01
+	bcc _bit_bits_done
+	lda EXO_zp_bitbuf
+._bit_bits_next
+	lsr a
+	bne _bit_ok
+	jsr get_crunched_byte
+	ror a
+._bit_ok
+	rol EXO_zp_bits_lo
+	rol EXO_zp_bits_hi
+	dex
+	bne _bit_bits_next
+	sta EXO_zp_bitbuf
+	lda EXO_zp_bits_lo
+._bit_bits_done
+	rts
+}
+; -------------------------------------------------------------------
+; end of decruncher
+; -------------------------------------------------------------------
+
+\ ******************************************************************
+\ *	Stored data
+\ ******************************************************************
+
+.VID_frame_start
+EQUW	VID_default_frame_addr
+.VID_frame_end
+EQUW	VID_default_frame_addr + VID_default_frame_size
+
+.osword_params
+.osword_params_drive
+EQUB 0				; drive
+.osword_params_address
+EQUD 0				; address
+EQUB &03			; number params
+EQUB &53			; command = read data multi-sector
+.osword_params_track
+EQUB 0				; logical track
+.osword_params_sector
+EQUB 0				; logical sector
+.osword_params_size_sectors
+EQUB &2A			; sector size / number sectors = 256 / 10
+.osword_params_return
+EQUB 0				; returned error value
+
+
+\ ******************************************************************
+\ *	Look up tables
+\ ******************************************************************
+
+.mode7_char_width_LO
+FOR n,0,25,1
+EQUB LO(n * MODE7_char_width)
+NEXT
+
+.mode7_char_width_HI
+FOR n,0,25,1
+EQUB HI(n * MODE7_char_width)
+NEXT
+
+\ ******************************************************************
+\ *	End address to be saved
+\ ******************************************************************
+
+.end
+
+; -------------------------------------------------------------------
+; this 156 byte table area may be relocated. It may also be clobbered
+; by other data between decrunches.
+; -------------------------------------------------------------------
+.decrunch_table
+.tabl_bi  SKIP 156
+tabl_lo = decrunch_table + 52
+tabl_hi = decrunch_table + 104
+
+; -------------------------------------------------------------------
+; end of decruncher
+; -------------------------------------------------------------------
+
+\ ******************************************************************
+\ *	Space reserved for runtime buffers not preinitialised
+\ ******************************************************************
+
+\\ Exomiser unpack buffer (must be page aligned)
+ALIGN &100
+.EXO_buffer_start
+SKIP EXO_buffer_len
+.EXO_buffer_end
+
+\ ******************************************************************
+\ *	EXO VGM data file
+\ * This must be compressed using the following flags:
+\ * exomizer.exe raw -c -m 1024 <file.raw> -o <file.exo>
+\ ******************************************************************
+
+ALIGN &100
+.STREAM_buffer_start
+SKIP STREAM_buffer_size
+.STREAM_buffer_end
+
+\ ******************************************************************
+\ *	Save the code
+\ ******************************************************************
+
+SAVE "M7VPLAY", start, end

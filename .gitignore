@@ -1,0 +1,14 @@
+*.suo
+mode7video/Debug/mode7video.Build.CppClean.log
+mode7video/Debug/mode7video.log
+*.obj
+*.tlog
+*.log
+mode7video.VC.db
+mode7video.VC.VC.opendb
+*.iobj
+*.ipdb
+mode7video/Release/vc140.pdb
+mode7video/Debug/vc140.idb
+mode7video/Debug/vc140.pdb
+ipch/MODE7VIDEO-6669f678/MODE7VIDEO-9c31363d.ipch
