@@ -13,6 +13,12 @@ using namespace cimg_library;
 #define MODE7_HEIGHT	25
 #define MODE7_MAX_SIZE	(MODE7_WIDTH * MODE7_HEIGHT)
 
+#define MODE7_BLACK_BG		156
+#define MODE7_NEW_BG		157
+#define MODE7_HOLD_GFX		158
+#define MODE7_RELEASE_GFX	159
+#define MODE7_GFX_COLOUR	144
+
 #define JPG_W			src._width		// w				// 76
 #define JPG_H			src._height		// h				// 57 = 4:3  // 42 = 16:9
 #define FRAME_WIDTH		(JPG_W/2)
@@ -33,11 +39,18 @@ using namespace cimg_library;
 #define _COLOUR_DEBUG		TRUE
 
 static CImg<unsigned char> src;
+static unsigned char prevmode7[MODE7_MAX_SIZE];
+static unsigned char delta[MODE7_MAX_SIZE];
+static unsigned char mode7[MODE7_MAX_SIZE];
 
 int get_colour_from_rgb(unsigned char r, unsigned char g, unsigned char b)
 {
 	return (r ? 1 : 0) + (g ? 2 : 0) + (b ? 4 : 0);
 }
+
+#define GET_RED_FROM_COLOUR(c)		(c & 1 ? 255:0)
+#define GET_GREEN_FROM_COLOUR(c)	(c & 2 ? 255:0)
+#define GET_BLUE_FROM_COLOUR(c)		(c & 4 ? 255:0)
 
 unsigned char pixel_to_grey(int mode, unsigned char r, unsigned char g, unsigned char b)
 {
@@ -62,6 +75,238 @@ unsigned char pixel_to_grey(int mode, unsigned char r, unsigned char g, unsigned
 		return 0;
 	}
 }
+
+// For each character cell on this line
+// Do we have pixels or not?
+// If we have pixels then need to decide whether is it better to replace this cell with a control code or use a graphic character
+// If we don't have pixels then need to decide whether it is better to insert a control code or leave empty
+// Possible control codes are: new fg colour, fill (bg colour = fg colour), no fill (bg colour = black), hold graphics (hold char = prev char), release graphics (hold char = empty)
+// "Better" means that the "error" for the rest of the line (appearance on screen vs actual image = deviation) is minimised
+
+// Functions - get_error_for_char(int x7, int y7, unsigned char code, int fg, int bg, unsigned char hold_char)
+int get_error_for_char(int x7, int y7, unsigned char proposed_char, int fg, int bg, unsigned char hold_char)
+{
+	int x = (x7 - (MODE7_WIDTH - FRAME_WIDTH)) * 2;
+	int y = y7 * 3;
+	int error = 0;
+
+	// If proposed character >= 128 then this is a control code
+	// If so then the hold char will be displayed on screen
+	// Otherwise it will be our proposed character (pixels)
+
+	unsigned char screen_char = (proposed_char >= 128 ? hold_char : proposed_char);
+
+	unsigned char screen_r, screen_g, screen_b;
+	unsigned char image_r, image_g, image_b;
+
+	// These are the pixels that will get written to the screen
+
+	screen_r = screen_char & 1 ? GET_RED_FROM_COLOUR(fg) : GET_RED_FROM_COLOUR(bg);
+	screen_g = screen_char & 1 ? GET_GREEN_FROM_COLOUR(fg) : GET_GREEN_FROM_COLOUR(bg);
+	screen_b = screen_char & 1 ? GET_BLUE_FROM_COLOUR(fg) : GET_BLUE_FROM_COLOUR(bg);
+
+	// These are the pixels in the image
+
+	image_r = src(x, y, 0);
+	image_g = src(x, y, 1);
+	image_b = src(x, y, 2);
+
+	// Calculate the error between them
+
+	error += ((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b));
+
+	screen_r = screen_char & 2 ? GET_RED_FROM_COLOUR(fg) : GET_RED_FROM_COLOUR(bg);
+	screen_g = screen_char & 2 ? GET_GREEN_FROM_COLOUR(fg) : GET_GREEN_FROM_COLOUR(bg);
+	screen_b = screen_char & 2 ? GET_BLUE_FROM_COLOUR(fg) : GET_BLUE_FROM_COLOUR(bg);
+
+	image_r = src(x+1, y, 0);
+	image_g = src(x+1, y, 1);
+	image_b = src(x+1, y, 2);
+
+	error += ((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b));
+
+	screen_r = screen_char & 4 ? GET_RED_FROM_COLOUR(fg) : GET_RED_FROM_COLOUR(bg);
+	screen_g = screen_char & 4 ? GET_GREEN_FROM_COLOUR(fg) : GET_GREEN_FROM_COLOUR(bg);
+	screen_b = screen_char & 4 ? GET_BLUE_FROM_COLOUR(fg) : GET_BLUE_FROM_COLOUR(bg);
+
+	image_r = src(x, y+1, 0);
+	image_g = src(x, y+1, 1);
+	image_b = src(x, y+1, 2);
+
+	error += ((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b));
+
+	screen_r = screen_char & 8 ? GET_RED_FROM_COLOUR(fg) : GET_RED_FROM_COLOUR(bg);
+	screen_g = screen_char & 8 ? GET_GREEN_FROM_COLOUR(fg) : GET_GREEN_FROM_COLOUR(bg);
+	screen_b = screen_char & 8 ? GET_BLUE_FROM_COLOUR(fg) : GET_BLUE_FROM_COLOUR(bg);
+
+	image_r = src(x+1, y + 1, 0);
+	image_g = src(x+1, y + 1, 1);
+	image_b = src(x+1, y + 1, 2);
+
+	error += ((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b));
+
+	screen_r = screen_char & 16 ? GET_RED_FROM_COLOUR(fg) : GET_RED_FROM_COLOUR(bg);
+	screen_g = screen_char & 16 ? GET_GREEN_FROM_COLOUR(fg) : GET_GREEN_FROM_COLOUR(bg);
+	screen_b = screen_char & 16 ? GET_BLUE_FROM_COLOUR(fg) : GET_BLUE_FROM_COLOUR(bg);
+
+	image_r = src(x, y + 2, 0);
+	image_g = src(x, y + 2, 1);
+	image_b = src(x, y + 2, 2);
+
+	error += ((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b));
+
+	screen_r = screen_char & 64 ? GET_RED_FROM_COLOUR(fg) : GET_RED_FROM_COLOUR(bg);
+	screen_g = screen_char & 64 ? GET_GREEN_FROM_COLOUR(fg) : GET_GREEN_FROM_COLOUR(bg);
+	screen_b = screen_char & 64 ? GET_BLUE_FROM_COLOUR(fg) : GET_BLUE_FROM_COLOUR(bg);
+
+	image_r = src(x + 1, y + 2, 0);
+	image_g = src(x + 1, y + 2, 1);
+	image_b = src(x + 1, y + 2, 2);
+
+	error += ((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b));
+
+	// For all six pixels in the character cell
+
+	return error;
+}
+
+int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, unsigned char hold_char, unsigned char prev_char, unsigned char *return_char)
+{
+	if (x7 >= MODE7_WIDTH)
+		return 0;
+
+//	printf("get_error_for_remainder_of_line(%d, %d, %d, %d, %d, %d)\n", x7, y7, fg, bg, hold_char, prev_char);
+
+	unsigned char current_char = mode7[(y7 * MODE7_WIDTH) + (x7)];
+	int x = (x7 - (MODE7_WIDTH - FRAME_WIDTH)) * 2;
+	int y = y7 * 3;
+	unsigned char graphic_char = 0;
+	int lowest_error = INT_MAX;
+	unsigned char best_char;
+
+	if (current_char != MODE7_BLANK)
+	{
+		// We have some pixels in this cell
+		// Calculate graphic character - if pixel == bg colour then off else on
+
+		graphic_char = 32 +																				// bit 5 always set!
+			+(get_colour_from_rgb(src(x, y, 0), src(x, y, 1), src(x, y, 2)) == bg ? 0 : 1)						// (x,y) = bit 0
+			+ (get_colour_from_rgb(src(x + 1, y, 0), src(x + 1, y, 1), src(x + 1, y, 2)) == bg ? 0 : 2)					// (x+1,y) = bit 1
+			+ (get_colour_from_rgb(src(x, y + 1, 0), src(x, y + 1, 1), src(x, y + 1, 2)) == bg ? 0 : 4)					// (x,y+1) = bit 2
+			+ (get_colour_from_rgb(src(x + 1, y + 1, 0), src(x + 1, y + 1, 1), src(x + 1, y + 1, 2)) == bg ? 0 : 8)			// (x+1,y+1) = bit 3
+			+ (get_colour_from_rgb(src(x, y + 2, 0), src(x, y + 2, 1), src(x, y + 2, 2)) == bg ? 0 : 16)				// (x,y+2) = bit 4
+			+ (get_colour_from_rgb(src(x + 1, y + 2, 0), src(x + 1, y + 2, 1), src(x + 1, y + 2, 2)) == bg ? 0 : 64);			// (x+1,y+2) = bit 6
+	}
+
+	// Possible characters are: 1 + 1 + 6 + 1 + 1 + 1 + 1 = 12 possibilities x 40 columns = 12 ^ 40 combinations.  That's not going to work :)
+	// Possible states for a given cell: fg=0-7, bg=0-7, hold_gfx=6 pixels : total = 12 bits = 4096 possible states
+	// Wait! What about prev_char as part of state if want to use hold graphics feature? prev_char=6 pixels so actually 18 bits = 262144 possible states
+	// Not all of them can be visited as we cannot arbitrarily set the previous character or hold character but still needs a 40Mb array of ints! :S
+
+	// Graphic char (if set)
+	// Stay blank (if not)
+	// Set graphic colour (colour != fg) - 6
+	// Fill (if bg == 0)
+	// No fill (if bg != 0)
+	// Hold graphics (if prev char is a graphic char)
+	// Release graphics
+
+	// If we have a graphic character we could use this!
+	if (graphic_char)
+	{
+		int error = get_error_for_char(x7, y7, graphic_char, fg, bg, hold_char) + get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, hold_char, graphic_char, &best_char);
+
+		if (error < lowest_error)
+		{
+			lowest_error = error;
+			*return_char = graphic_char;
+		}
+	}
+	// If we are blank could just keep this!
+	
+	if( !graphic_char )
+	{
+		int error = get_error_for_char(x7, y7, MODE7_BLANK, fg, bg, hold_char) + get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, hold_char, MODE7_BLANK, &best_char);
+
+		if (error < lowest_error)
+		{
+			lowest_error = error;
+			*return_char = MODE7_BLANK;
+		}
+	}
+
+	// If the background is black we could enable fill!
+	if (bg == 0)
+	{
+		// Bg colour becomes fg colour
+		int error = get_error_for_char(x7, y7, MODE7_NEW_BG, fg, bg, hold_char) + get_error_for_remainder_of_line(x7 + 1, y7, fg, fg, hold_char, MODE7_NEW_BG, &best_char);
+
+		if (error < lowest_error)
+		{
+			lowest_error = error;
+			*return_char = MODE7_NEW_BG;
+		}
+	}
+
+	// If the background is not black we could disable fill!
+	if (bg != 0)
+	{
+		// Bg colour becomes black
+		int error = get_error_for_char(x7, y7, MODE7_BLACK_BG, fg, bg, hold_char) + get_error_for_remainder_of_line(x7 + 1, y7, fg, 0, hold_char, MODE7_BLACK_BG, &best_char);
+
+		if (error < lowest_error)
+		{
+			lowest_error = error;
+			*return_char = MODE7_BLACK_BG;
+		}
+	}
+
+	// If previous character was a graphic we could hold it!
+	if (prev_char < 128 && prev_char != MODE7_BLANK )
+	{
+		// Hold character becomes previous character
+		int error = get_error_for_char(x7, y7, MODE7_HOLD_GFX, fg, bg, hold_char) + get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, prev_char, MODE7_HOLD_GFX, &best_char);
+
+		if (error < lowest_error)
+		{
+			lowest_error = error;
+			*return_char = MODE7_HOLD_GFX;
+		}
+	}
+
+	// If hold character is set we could release it!
+	if (hold_char != MODE7_BLANK)
+	{
+		// Hold character becomes blank
+		int error = get_error_for_char(x7, y7, MODE7_RELEASE_GFX, fg, bg, hold_char) + get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, MODE7_BLANK, MODE7_RELEASE_GFX, &best_char);
+
+		if (error < lowest_error)
+		{
+			lowest_error = error;
+			*return_char = MODE7_RELEASE_GFX;
+		}
+	}
+
+	for (int c = 1; c < 8; c++)
+	{
+		// We could change our fg colour
+		if (c != fg)
+		{
+			int error = get_error_for_char(x7, y7, MODE7_GFX_COLOUR + c, fg, bg, hold_char) + get_error_for_remainder_of_line(x7 + 1, y7, c, bg, hold_char, MODE7_GFX_COLOUR + c, &best_char);
+
+			if (error < lowest_error)
+			{
+				lowest_error = error;
+				*return_char = MODE7_GFX_COLOUR + c;
+			}
+		}
+	}
+
+//	printf("(%d, %d) returning char=%d lowest error=%d\n", x7, y7, *return_char, lowest_error);
+
+	return lowest_error;
+}
+
 
 int main(int argc, char **argv)
 {
@@ -89,9 +334,6 @@ int main(int argc, char **argv)
 	char filename[256];
 	char input[256];
 
-	unsigned char prevmode7[MODE7_MAX_SIZE];
-	unsigned char delta[MODE7_MAX_SIZE];
-	unsigned char mode7[MODE7_MAX_SIZE];
 
 	int totaldeltas = 0;
 	int totalbytes = 0;
@@ -305,38 +547,41 @@ int main(int argc, char **argv)
 			mode7[y7 * MODE7_WIDTH] = MODE7_COL0; // graphic white
 			mode7[1 + (y7 * MODE7_WIDTH)] = MODE7_COL1; // graphic white
 
-			int line[MODE7_WIDTH][8];
-			int domcol[MODE7_WIDTH][2];
+			int colour_counts_per_char[MODE7_WIDTH][8];
+			int fg_bg_per_char[MODE7_WIDTH][2];
 
 			for (int x7 = 0; x7 < MODE7_WIDTH; x7++)
 			{
 				for (int c = 0; c < 8; c++)
-					line[x7][c] = 0;
+					colour_counts_per_char[x7][c] = 0;
 
-				domcol[x7][0] = 0;
-				domcol[x7][1] = 0;		// should it be 7 for white?
+				fg_bg_per_char[x7][0] = 0;
+				fg_bg_per_char[x7][1] = 0;		// should it be 7 for white?
 			}
 
 			cimg_forX(src, x)
 			{
 				int x7 = (x / 2) + (MODE7_WIDTH - FRAME_WIDTH);
 
-				line[x7][get_colour_from_rgb(src(x, y, 0), src(x, y, 1), src(x, y, 2))]++;
-				line[x7][get_colour_from_rgb(src(x+1, y, 0), src(x+1, y, 1), src(x+1, y, 2))]++;
-				line[x7][get_colour_from_rgb(src(x, y+1, 0), src(x, y+1, 1), src(x, y+1, 2))]++;
-				line[x7][get_colour_from_rgb(src(x+1, y+1, 0), src(x+1, y+1, 1), src(x+1, y+1, 2))]++;
-				line[x7][get_colour_from_rgb(src(x, y+2, 0), src(x, y+2, 1), src(x, y+2, 2))]++;
-				line[x7][get_colour_from_rgb(src(x+1, y+2, 0), src(x+1, y+2, 1), src(x+1, y+2, 2))]++;
+				colour_counts_per_char[x7][get_colour_from_rgb(src(x, y, 0), src(x, y, 1), src(x, y, 2))]++;
+				colour_counts_per_char[x7][get_colour_from_rgb(src(x+1, y, 0), src(x+1, y, 1), src(x+1, y, 2))]++;
+				colour_counts_per_char[x7][get_colour_from_rgb(src(x, y+1, 0), src(x, y+1, 1), src(x, y+1, 2))]++;
+				colour_counts_per_char[x7][get_colour_from_rgb(src(x+1, y+1, 0), src(x+1, y+1, 1), src(x+1, y+1, 2))]++;
+				colour_counts_per_char[x7][get_colour_from_rgb(src(x, y+2, 0), src(x, y+2, 1), src(x, y+2, 2))]++;
+				colour_counts_per_char[x7][get_colour_from_rgb(src(x+1, y+2, 0), src(x+1, y+2, 1), src(x+1, y+2, 2))]++;
 
 			//	printf("(%d, %d) = (0x%x, 0x%x, 0x%x)\n", x, y, src(x, y, 0), src(x, y, 1), src(x, y, 2));
 
-				mode7[(y7 * MODE7_WIDTH) + (x7)] = 32															// bit 5 always set!
-						+ (src(x, y, 0)				?  1 : 0)			// (x,y) = bit 0
-						+ (src(x + 1, y, 0)			?  2 : 0)			// (x+1,y) = bit 1
-						+ (src(x, y + 1, 0)			?  4 : 0)			// (x,y+1) = bit 2
-						+ (src(x + 1, y + 1, 0)		?  8 : 0)			// (x+1,y+1) = bit 3
-						+ (src(x, y + 2, 0)			? 16 : 0)			// (x,y+2) = bit 4
-						+ (src(x + 1, y + 2, 0)		? 64 : 0);			// (x+1,y+2) = bit 6
+			//	mode7[(y7 * MODE7_WIDTH) + (x7)] = 32															// bit 5 always set!
+			//			+ (src(x, y, 0)				?  1 : 0)			// (x,y) = bit 0
+			//			+ (src(x + 1, y, 0)			?  2 : 0)			// (x+1,y) = bit 1
+			//			+ (src(x, y + 1, 0)			?  4 : 0)			// (x,y+1) = bit 2
+			//			+ (src(x + 1, y + 1, 0)		?  8 : 0)			// (x+1,y+1) = bit 3
+			//			+ (src(x, y + 2, 0)			? 16 : 0)			// (x,y+2) = bit 4
+			//			+ (src(x + 1, y + 2, 0)		? 64 : 0);			// (x+1,y+2) = bit 6
+
+				// Just indicate pixels or not
+				mode7[(y7 * MODE7_WIDTH) + (x7)] = colour_counts_per_char[x7][0] == 6 ? 32 : 255;
 
 				x++;
 
@@ -347,98 +592,105 @@ int main(int argc, char **argv)
 
 				for (int c = 1; c < 8; c++)
 				{
-					if (line[x7][c]) unique_colours++;
-					if (line[x7][c] && line[x7][c] >= max_count)			// must have a count to count!
+					if (colour_counts_per_char[x7][c]) unique_colours++;
+					if (colour_counts_per_char[x7][c] && colour_counts_per_char[x7][c] >= max_count)			// must have a count to count!
 					{
-						max_count = line[x7][c];
+						max_count = colour_counts_per_char[x7][c];
 						dominant_colour = c;
 					}
 				}
 
-				if (line[x7][0])				// black always a background colour
+				if (colour_counts_per_char[x7][0])				// black always a background colour
 				{
-					domcol[x7][0] = 0;
-					domcol[x7][1] = dominant_colour;
+					fg_bg_per_char[x7][0] = 0;
+					fg_bg_per_char[x7][1] = dominant_colour;
 				}
 				else
 				{
-					domcol[x7][0] = dominant_colour;
+					fg_bg_per_char[x7][0] = dominant_colour;
 
 					max_count = 0;
 					dominant_colour = 0;
 
 					for (int c = 1; c < 8; c++)
 					{
-						if ( c!= domcol[x7][0] && line[x7][c] && line[x7][c] >= max_count)			// must have a count to count!
+						if ( c!= fg_bg_per_char[x7][0] && colour_counts_per_char[x7][c] && colour_counts_per_char[x7][c] >= max_count)			// must have a count to count!
 						{
-							max_count = line[x7][c];
+							max_count = colour_counts_per_char[x7][c];
 							dominant_colour = c;
 						}
 					}
 
-					domcol[x7][1] = dominant_colour;
+					fg_bg_per_char[x7][1] = dominant_colour;
 				}
 
 #if _COLOUR_DEBUG
-				printf("(%d, %d) = [%d %d %d %d %d %d %d %d] (u=%d bg=%d fg=%d)\n", x7, y7, line[x7][0], line[x7][1], line[x7][2], line[x7][3], line[x7][4], line[x7][5], line[x7][6], line[x7][7], unique_colours, domcol[x7][0], domcol[x7][1]);
+				printf("(%d, %d) = [%d %d %d %d %d %d %d %d] (u=%d bg=%d fg=%d)\n", x7, y7, colour_counts_per_char[x7][0], colour_counts_per_char[x7][1], colour_counts_per_char[x7][2], colour_counts_per_char[x7][3], colour_counts_per_char[x7][4], colour_counts_per_char[x7][5], colour_counts_per_char[x7][6], colour_counts_per_char[x7][7], unique_colours, fg_bg_per_char[x7][0], fg_bg_per_char[x7][1]);
 #endif
 			}
 
-			int current_colour = 7;
-			int current_fill = 0;
+			// Here we have:
+			// pixel data turned into graphic characters in mode7 array - actually just an indication if pixels in cell
+			// counts of each colour in a character cell
+			// proposed fg and bg colour per character cell
+
+			// Reset state as starting new character row
+			// State = fg colour + bg colour + hold character + prev character
+			// For each character cell on this line
+			// Do we have pixels or not?
+			// If we have pixels then need to decide whether is it better to replace this cell with a control code or keep pixels
+			// If we don't have pixels then need to decide whether it is better to insert a control code or leave empty
+			// Possible control codes are: new fg colour, fill (bg colour = fg colour), no fill (bg colour = black), hold graphics (hold char = prev char), release graphics (hold char = empty)
+			// "Better" means that the "error" for the rest of the line (appearance on screen vs actual image = deviation) is minimised
+
+			// Functions - get_best_char_for_cell(int x7, int y7, int fg, int bg, unsigned char hold_char, unsigned char prev_char)
+			// Functions - get_char_and_error_for_pixels_given_state(int x7, int y7, int fg, int bg)
+			// Functions - get_error_for_char(int x7, int y7, unsigned char code, int fg, int bg, unsigned char hold_char)
+
+			unsigned char hold_char = MODE7_BLANK;
+			unsigned char prev_char = MODE7_BLANK;
+			int fg = 7;
+			int bg = 0;
 
 			for (int x7 = (MODE7_WIDTH - FRAME_WIDTH); x7 < MODE7_WIDTH; x7++)
 			{
-				if (domcol[x7][0] != current_fill)
+				unsigned char best_char;
+				
+				printf("(%d, %d) fg=%d bg=%d hold=%d prev=%d\n", x7, y7, fg, bg, hold_char, prev_char);
+
+				int error = get_error_for_remainder_of_line(x7, y7, fg, bg, hold_char, prev_char, &best_char);
+
+				printf("(%d, %d) best char = %d\n", x7, y7, best_char);
+
+				mode7[(y7 * MODE7_WIDTH) + (x7)] = best_char;
+
+				// Update state:
+				if (best_char == MODE7_BLACK_BG)
 				{
-					if (domcol[x7][0] && domcol[x7][0] != current_colour)
-					{
-						current_colour = domcol[x7][0];
-						mode7[y7*MODE7_WIDTH + x7 - 1] = 144 + current_colour;
-#if _COLOUR_DEBUG
-						printf("(%d, %d) Forced colour change %d\n", x7 - 1, y7, current_colour);
-#endif
-					}
-
-					current_fill = domcol[x7][0];
-
-					if (current_fill)
-					{
-						mode7[y7*MODE7_WIDTH + x7] = 157;				// new background
-#if _COLOUR_DEBUG
-						printf("(%d, %d) Forced fill\n", x7, y7);
-#endif
-					}
-					else
-					{
-						mode7[y7*MODE7_WIDTH + x7] = 156;		// black background
-#if _COLOUR_DEBUG
-						printf("(%d, %d) Forced black background\n", x7, y7);
-#endif
-					}
+					bg = 0;
 				}
 
-				// Need to switch colour
-				if (domcol[x7][1])
+				if (best_char == MODE7_NEW_BG)
 				{
-					if (domcol[x7][1] != current_colour)
-					{
-						if (mode7[y7*MODE7_WIDTH + x7 - 1] == MODE7_BLANK)
-						{
-							current_colour = domcol[x7][1];
-							mode7[y7*MODE7_WIDTH + x7 - 1] = 144 + current_colour;
-#if _COLOUR_DEBUG
-							printf("(%d, %d) Inserting colour change %d\n", x7 - 1, y7, current_colour);
-#endif
-						}
-						else
-						{
-#if _COLOUR_DEBUG
-							printf("(%d, %d) Failed to insert change to colour %d\n", x7, y7, domcol[x7][1]);
-#endif
-						}
-					}
+					bg = fg;
 				}
+
+				if (best_char == MODE7_HOLD_GFX)
+				{
+					hold_char = prev_char;
+				}
+
+				if (best_char == MODE7_RELEASE_GFX)
+				{
+					hold_char = MODE7_BLANK;
+				}
+
+				if (best_char > MODE7_GFX_COLOUR && best_char < MODE7_GFX_COLOUR+8)
+				{
+					fg = best_char - MODE7_GFX_COLOUR;
+				}
+
+				prev_char = best_char;
 			}
 
 			// printf("\n");
