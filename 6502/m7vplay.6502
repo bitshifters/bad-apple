@@ -631,7 +631,8 @@ ENDIF
 	STA writeptr
 
 	LDA packed_delta+1
-	AND #&3						; only need bottom 2 bits
+; No need to do this with COLOUR
+;	AND #&3						; only need bottom 2 bits
 	ADC writeptr+1
 	STA writeptr+1
 
@@ -640,6 +641,7 @@ ENDIF
 	\\ 0X01 1111
 	\\ 0X11 1111
 
+IF 0	; No need to do this with COLOUR
 	LDA packed_delta+1
 	AND #128					; top bit 7
 	LSR A						; shift down to bit 6
@@ -650,6 +652,10 @@ ENDIF
 	LSR A						; shift down twice
 	ORA #32						; always need 32 for MODE 7
 	ORA shifted_bit				; mask in bit 6
+ELSE
+	JSR get_decrunched_byte
+	BCS return
+ENDIF
 
 	\\ Write to screen! (do this without indirect write?)
 	LDY #0

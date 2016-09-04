@@ -30,24 +30,36 @@ using namespace cimg_library;
 #define LO(a)					((a) % 256)
 #define HI(a)					((a) / 256)
 
+#define _COLOUR_DEBUG		TRUE
+
+static CImg<unsigned char> src;
+
+int get_colour_from_rgb(unsigned char r, unsigned char g, unsigned char b)
+{
+	return (r ? 1 : 0) + (g ? 2 : 0) + (b ? 4 : 0);
+}
+
 unsigned char pixel_to_grey(int mode, unsigned char r, unsigned char g, unsigned char b)
 {
 	switch (mode)
 	{
-	case 0:
+	case 1:
 		return r;
 
-	case 1:
+	case 2:
 		return g;
 
-	case 2:
+	case 3:
 		return b;
 
 	case 4:
+		return (unsigned char)((r + g + b) / 3);
+
+	case 5:
 		return (unsigned char)(0.2126f * r + 0.7152f * g + 0.0722f * b);
 
 	default:
-		return (unsigned char)((r + g + b) / 3);
+		return 0;
 	}
 }
 
@@ -59,10 +71,11 @@ int main(int argc, char **argv)
 	const int start = cimg_option("-s", 1, "Start frame number");
 	const char *const shortname = cimg_option("-i", (char*)0, "Input (directory / short name)");
 	const char *const ext = cimg_option("-e", (char*)"png", "Image format file extension");
-	const int gmode = cimg_option("-g", 0, "Colour to greyscale conversion (0=red only, 1=green only, 2=blue only, 3=simple average, 4=luminence preserving");
+	const int gmode = cimg_option("-g", 0, "Colour to greyscale conversion (0=none, 1=red only, 2=green only, 3=blue only, 4=simple average, 5=luminence preserving");
 	const int thresh = cimg_option("-t", 127, "B&W threshold value");
 	const int dither = cimg_option("-d", 0, "Dither mode (0=none/threshold only, 1=floyd steinberg, 2=ordered 2x2, 3=ordered 3x3");
 	const bool save = cimg_option("-save", false, "Save individual MODE7 frames");
+	const bool simg = cimg_option("-simg", false, "Save individual image frames");
 	const bool sep = cimg_option("-sep", false, "Separated graphics");
 	const bool verbose = cimg_option("-v", false, "Verbose output");
 //	const int cbr_frames = cimg_option("-cbr", 0, "CBR frames [experimental/unfinished]");
@@ -72,8 +85,6 @@ int main(int argc, char **argv)
 
 	if (cimg_option("-h", false, 0)) std::exit(0);
 	if (shortname == NULL)  std::exit(0);
-
-	CImg<unsigned char> src;
 
 	char filename[256];
 	char input[256];
@@ -130,9 +141,14 @@ int main(int argc, char **argv)
 
 		// Convert to greyscale from RGB
 
-		cimg_forXY(src, x, y)
+		if (gmode)
 		{
-			src(x, y, 0) = pixel_to_grey(gmode, src(x, y, 0), src(x, y, 1), src(x, y, 2));
+			cimg_forXY(src, x, y)
+			{
+				src(x, y, 0) = pixel_to_grey(gmode, src(x, y, 0), src(x, y, 1), src(x, y, 2));
+				src(x, y, 1) = pixel_to_grey(gmode, src(x, y, 0), src(x, y, 1), src(x, y, 2));
+				src(x, y, 2) = pixel_to_grey(gmode, src(x, y, 0), src(x, y, 1), src(x, y, 2));
+			}
 		}
 
 		// Dithering
@@ -142,6 +158,8 @@ int main(int argc, char **argv)
 			cimg_forXY(src, x, y)
 			{
 				src(x, y, 0) = THRESHOLD(src(x, y, 0), thresh);
+				src(x, y, 1) = THRESHOLD(src(x, y, 1), thresh);
+				src(x, y, 2) = THRESHOLD(src(x, y, 2), thresh);
 			}
 		}
 		else if (dither == 1)				// Floyd Steinberg
@@ -273,6 +291,13 @@ int main(int argc, char **argv)
 			}
 		}
 
+		if (simg)
+		{
+			sprintf(filename, "%s\\test\\%s-%d.png", DIRECTORY, FILENAME, n);
+			src.save(filename);
+		}
+
+		// Conversion to MODE 7
 
 		cimg_forY(src, y)
 		{
@@ -280,13 +305,32 @@ int main(int argc, char **argv)
 			mode7[y7 * MODE7_WIDTH] = MODE7_COL0; // graphic white
 			mode7[1 + (y7 * MODE7_WIDTH)] = MODE7_COL1; // graphic white
 
+			int line[MODE7_WIDTH][8];
+			int domcol[MODE7_WIDTH][2];
+
+			for (int x7 = 0; x7 < MODE7_WIDTH; x7++)
+			{
+				for (int c = 0; c < 8; c++)
+					line[x7][c] = 0;
+
+				domcol[x7][0] = 0;
+				domcol[x7][1] = 0;		// should it be 7 for white?
+			}
+
 			cimg_forX(src, x)
 			{
-				int x7 = x / 2;
+				int x7 = (x / 2) + (MODE7_WIDTH - FRAME_WIDTH);
+
+				line[x7][get_colour_from_rgb(src(x, y, 0), src(x, y, 1), src(x, y, 2))]++;
+				line[x7][get_colour_from_rgb(src(x+1, y, 0), src(x+1, y, 1), src(x+1, y, 2))]++;
+				line[x7][get_colour_from_rgb(src(x, y+1, 0), src(x, y+1, 1), src(x, y+1, 2))]++;
+				line[x7][get_colour_from_rgb(src(x+1, y+1, 0), src(x+1, y+1, 1), src(x+1, y+1, 2))]++;
+				line[x7][get_colour_from_rgb(src(x, y+2, 0), src(x, y+2, 1), src(x, y+2, 2))]++;
+				line[x7][get_colour_from_rgb(src(x+1, y+2, 0), src(x+1, y+2, 1), src(x+1, y+2, 2))]++;
 
 			//	printf("(%d, %d) = (0x%x, 0x%x, 0x%x)\n", x, y, src(x, y, 0), src(x, y, 1), src(x, y, 2));
 
-				mode7[(y7 * MODE7_WIDTH) + (x7 + (MODE7_WIDTH-FRAME_WIDTH))] = 32															// bit 5 always set!
+				mode7[(y7 * MODE7_WIDTH) + (x7)] = 32															// bit 5 always set!
 						+ (src(x, y, 0)				?  1 : 0)			// (x,y) = bit 0
 						+ (src(x + 1, y, 0)			?  2 : 0)			// (x+1,y) = bit 1
 						+ (src(x, y + 1, 0)			?  4 : 0)			// (x,y+1) = bit 2
@@ -295,7 +339,108 @@ int main(int argc, char **argv)
 						+ (src(x + 1, y + 2, 0)		? 64 : 0);			// (x+1,y+2) = bit 6
 
 				x++;
+
+
+				int unique_colours = 0;
+				int dominant_colour = 0;
+				int max_count = 0;
+
+				for (int c = 1; c < 8; c++)
+				{
+					if (line[x7][c]) unique_colours++;
+					if (line[x7][c] && line[x7][c] >= max_count)			// must have a count to count!
+					{
+						max_count = line[x7][c];
+						dominant_colour = c;
+					}
+				}
+
+				if (line[x7][0])				// black always a background colour
+				{
+					domcol[x7][0] = 0;
+					domcol[x7][1] = dominant_colour;
+				}
+				else
+				{
+					domcol[x7][0] = dominant_colour;
+
+					max_count = 0;
+					dominant_colour = 0;
+
+					for (int c = 1; c < 8; c++)
+					{
+						if ( c!= domcol[x7][0] && line[x7][c] && line[x7][c] >= max_count)			// must have a count to count!
+						{
+							max_count = line[x7][c];
+							dominant_colour = c;
+						}
+					}
+
+					domcol[x7][1] = dominant_colour;
+				}
+
+#if _COLOUR_DEBUG
+				printf("(%d, %d) = [%d %d %d %d %d %d %d %d] (u=%d bg=%d fg=%d)\n", x7, y7, line[x7][0], line[x7][1], line[x7][2], line[x7][3], line[x7][4], line[x7][5], line[x7][6], line[x7][7], unique_colours, domcol[x7][0], domcol[x7][1]);
+#endif
 			}
+
+			int current_colour = 7;
+			int current_fill = 0;
+
+			for (int x7 = (MODE7_WIDTH - FRAME_WIDTH); x7 < MODE7_WIDTH; x7++)
+			{
+				if (domcol[x7][0] != current_fill)
+				{
+					if (domcol[x7][0] && domcol[x7][0] != current_colour)
+					{
+						current_colour = domcol[x7][0];
+						mode7[y7*MODE7_WIDTH + x7 - 1] = 144 + current_colour;
+#if _COLOUR_DEBUG
+						printf("(%d, %d) Forced colour change %d\n", x7 - 1, y7, current_colour);
+#endif
+					}
+
+					current_fill = domcol[x7][0];
+
+					if (current_fill)
+					{
+						mode7[y7*MODE7_WIDTH + x7] = 157;				// new background
+#if _COLOUR_DEBUG
+						printf("(%d, %d) Forced fill\n", x7, y7);
+#endif
+					}
+					else
+					{
+						mode7[y7*MODE7_WIDTH + x7] = 156;		// black background
+#if _COLOUR_DEBUG
+						printf("(%d, %d) Forced black background\n", x7, y7);
+#endif
+					}
+				}
+
+				// Need to switch colour
+				if (domcol[x7][1])
+				{
+					if (domcol[x7][1] != current_colour)
+					{
+						if (mode7[y7*MODE7_WIDTH + x7 - 1] == MODE7_BLANK)
+						{
+							current_colour = domcol[x7][1];
+							mode7[y7*MODE7_WIDTH + x7 - 1] = 144 + current_colour;
+#if _COLOUR_DEBUG
+							printf("(%d, %d) Inserting colour change %d\n", x7 - 1, y7, current_colour);
+#endif
+						}
+						else
+						{
+#if _COLOUR_DEBUG
+							printf("(%d, %d) Failed to insert change to colour %d\n", x7, y7, domcol[x7][1]);
+#endif
+						}
+					}
+				}
+			}
+
 			// printf("\n");
 
 			y += 2;
@@ -339,7 +484,7 @@ int main(int argc, char **argv)
 		if (numdeltas > maxdeltas) maxdeltas = numdeltas;
 		delta_counts[n] = numdeltas;
 
-		if (numdeltas > FRAME_SIZE/2)
+		if (numdeltas > FRAME_SIZE/3)
 		{
 			numdeltabytes = FRAME_SIZE;
 			resetframes++;
@@ -357,7 +502,7 @@ int main(int argc, char **argv)
 		}
 		else
 		{
-			numdeltabytes = numdeltas * 2;
+			numdeltabytes = numdeltas * 3;
 
 			*ptr++ = LO(numdeltas);
 			*ptr++ = HI(numdeltas);
@@ -369,6 +514,7 @@ int main(int argc, char **argv)
 				if (delta[i] != 0)
 				{
 					unsigned char byte = mode7[i];			//  ^ prevmode7[i] for EOR with prev.
+#if 0
 
 					unsigned short pack = byte & 31;		// remove bits 5 & 6
 
@@ -377,7 +523,12 @@ int main(int argc, char **argv)
 
 					*ptr++ = LO(pack);
 					*ptr++ = HI(pack);
-
+#else
+					// No pack
+					*ptr++ = LO((i - previ));
+					*ptr++ = HI((i - previ));
+					*ptr++ = byte;
+#endif
 					previ = i;								// or 0 for offset from screen start
 				}
 			}
