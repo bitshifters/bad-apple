@@ -51,13 +51,15 @@ static unsigned char prevmode7[MODE7_MAX_SIZE];
 static unsigned char delta[MODE7_MAX_SIZE];
 static unsigned char mode7[MODE7_MAX_SIZE];
 
-#define MAX_STATE (1U << 6)
-#define GET_STATE(fg,bg,hold,prev)	(((bg) << 3) | (fg))
+#define MAX_STATE (1U << 14)
+#define GET_STATE(fg,bg,hold_mode,last_gfx_char)	((last_gfx_char) << 7 | (hold_mode) << 6 | ((bg) << 3) | (fg))
 
 static int total_error_in_state[MAX_STATE][MODE7_WIDTH + 1];
 static unsigned char char_for_xpos_in_state[MAX_STATE][MODE7_WIDTH + 1];
 static unsigned char output[MODE7_WIDTH];
 
+static bool global_use_hold = true;
+static bool global_use_fill = true;
 
 void clear_error_char_arrays(void)
 {
@@ -75,15 +77,20 @@ int get_state_for_char(unsigned char proposed_char, int old_state)
 {
 	int fg = old_state & 7;
 	int bg = (old_state >> 3) & 7;
+	int hold_mode = (old_state >> 6) & 1;
+	unsigned char last_gfx_char = (old_state >> 7) & 0x7f;
 
-	if (proposed_char == MODE7_NEW_BG)
+	if (global_use_fill)
 	{
-		bg = fg;
-	}
+		if (proposed_char == MODE7_NEW_BG)
+		{
+			bg = fg;
+		}
 
-	if (proposed_char == MODE7_BLACK_BG)
-	{
-		bg = 0;
+		if (proposed_char == MODE7_BLACK_BG)
+		{
+			bg = 0;
+		}
 	}
 
 	if (proposed_char > MODE7_GFX_COLOUR && proposed_char < MODE7_GFX_COLOUR + 8)
@@ -91,7 +98,31 @@ int get_state_for_char(unsigned char proposed_char, int old_state)
 		fg = proposed_char - MODE7_GFX_COLOUR;
 	}
 
-	return GET_STATE(fg, bg, MODE7_BLANK, MODE7_BLANK);
+	if (global_use_hold)
+	{
+		if (proposed_char == MODE7_HOLD_GFX)
+		{
+			hold_mode = true;
+		}
+
+		if (proposed_char == MODE7_RELEASE_GFX)
+		{
+			hold_mode = false;
+			last_gfx_char = MODE7_BLANK;
+		}
+
+		if (proposed_char < 128)
+		{
+			last_gfx_char = proposed_char;
+		}
+	}
+	else
+	{
+		hold_mode = false;
+		last_gfx_char = MODE7_BLANK;
+	}
+
+	return GET_STATE(fg, bg, hold_mode, last_gfx_char);
 }
 
 
@@ -138,7 +169,7 @@ unsigned char pixel_to_grey(int mode, unsigned char r, unsigned char g, unsigned
 // Hold graphics mode means use last known (used on the line) graphic character in place of space when emitting a control code (reset if using alphanumerics not graphics)
 
 // Functions - get_error_for_char(int x7, int y7, unsigned char code, int fg, int bg, unsigned char hold_char)
-int get_error_for_char(int x7, int y7, unsigned char proposed_char, int fg, int bg, unsigned char hold_char)
+int get_error_for_char(int x7, int y7, unsigned char proposed_char, int fg, int bg, bool hold_mode, unsigned char last_gfx_char)
 {
 	int x = (x7 - (MODE7_WIDTH - FRAME_WIDTH)) * 2;
 	int y = y7 * 3;
@@ -148,7 +179,16 @@ int get_error_for_char(int x7, int y7, unsigned char proposed_char, int fg, int 
 	// If so then the hold char will be displayed on screen
 	// Otherwise it will be our proposed character (pixels)
 
-	unsigned char screen_char = (proposed_char >= 128 ? hold_char : proposed_char);
+	unsigned char screen_char;
+
+	if (hold_mode)
+	{
+		screen_char = (proposed_char >= 128) ? last_gfx_char : proposed_char;
+	}
+	else
+	{
+		screen_char = (proposed_char >= 128) ? MODE7_BLANK : proposed_char;
+	}
 
 	unsigned char screen_r, screen_g, screen_b;
 	unsigned char image_r, image_g, image_b;
@@ -224,12 +264,12 @@ int get_error_for_char(int x7, int y7, unsigned char proposed_char, int fg, int 
 	return error;
 }
 
-int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, unsigned char hold_char, unsigned char prev_char)
+int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, bool hold_mode, unsigned char last_gfx_char)
 {
 	if (x7 >= MODE7_WIDTH)
 		return 0;
 
-	int state = GET_STATE(fg, bg, hold_char, prev_char);
+	int state = GET_STATE(fg, bg, hold_mode, last_gfx_char);
 
 	if (total_error_in_state[state][x7] != -1)
 		return total_error_in_state[state][x7];
@@ -277,9 +317,9 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, unsigned cha
 	// If we have a graphic character or blank we could use this!
 	if (graphic_char == MODE7_BLANK)
 	{
-		int newstate = GET_STATE(fg, bg, hold_char, prev_char);
-		int error = get_error_for_char(x7, y7, graphic_char, fg, bg, hold_char);
-		int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, hold_char, graphic_char);
+		int newstate = GET_STATE(fg, bg, hold_mode, graphic_char);
+		int error = get_error_for_char(x7, y7, graphic_char, fg, bg, hold_mode, graphic_char);
+		int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, hold_mode, graphic_char);
 
 		if (total_error_in_state[newstate][x7 + 1] == -1)
 		{
@@ -297,89 +337,111 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, unsigned cha
 	}
 
 	// If the background is black we could enable fill! - you idiot - can enable fill at any time if fg colour has changed since last time!
-	if (bg != fg)
+	if (global_use_fill)
 	{
-		// Bg colour becomes fg colour
-		int newstate = GET_STATE(fg, fg, hold_char, prev_char);
-		int error = get_error_for_char(x7, y7, MODE7_NEW_BG, fg, fg, hold_char);
-		int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, fg, hold_char, MODE7_NEW_BG);
-
-		if (total_error_in_state[newstate][x7 + 1] == -1)
+		if (bg != fg)
 		{
-			total_error_in_state[newstate][x7 + 1] = remaining;
-			char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
+			// Bg colour becomes fg colour
+			int newstate = GET_STATE(fg, fg, hold_mode, last_gfx_char);
+			int error = get_error_for_char(x7, y7, MODE7_NEW_BG, fg, fg, hold_mode, last_gfx_char);
+			int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, fg, hold_mode, last_gfx_char);
+
+			if (total_error_in_state[newstate][x7 + 1] == -1)
+			{
+				total_error_in_state[newstate][x7 + 1] = remaining;
+				char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
+			}
+
+			error += remaining;
+
+			if (error < lowest_error)
+			{
+				lowest_error = error;
+				lowest_char = MODE7_NEW_BG;
+			}
 		}
 
-		error += remaining;
-
-		if (error < lowest_error)
+		// If the background is not black we could disable fill!
+		if (bg != 0)
 		{
-			lowest_error = error;
-			lowest_char = MODE7_NEW_BG;
+			// Bg colour becomes black
+			int newstate = GET_STATE(fg, 0, hold_mode, last_gfx_char);
+			int error = get_error_for_char(x7, y7, MODE7_BLACK_BG, fg, 0, hold_mode, last_gfx_char);
+			int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, 0, hold_mode, last_gfx_char);
+
+			if (total_error_in_state[newstate][x7 + 1] == -1)
+			{
+				total_error_in_state[newstate][x7 + 1] = remaining;
+				char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
+			}
+
+			error += remaining;
+
+			if (error < lowest_error)
+			{
+				lowest_error = error;
+				lowest_char = MODE7_BLACK_BG;
+			}
 		}
 	}
 
-	// If the background is not black we could disable fill!
-	if (bg != 0)
+	// We could enter hold graphics mode!
+	if (global_use_hold)
 	{
-		// Bg colour becomes black
-		int newstate = GET_STATE(fg, 0, hold_char, prev_char);
-		int error = get_error_for_char(x7, y7, MODE7_BLACK_BG, fg, 0, hold_char);
-		int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, 0, hold_char, MODE7_BLACK_BG);
-
-		if (total_error_in_state[newstate][x7 + 1] == -1)
+		if (!hold_mode)
 		{
-			total_error_in_state[newstate][x7 + 1] = remaining;
-			char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
+			int newstate = GET_STATE(fg, bg, true, last_gfx_char);
+			int error = get_error_for_char(x7, y7, MODE7_HOLD_GFX, fg, bg, true, last_gfx_char);
+			int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, true, last_gfx_char);
+
+			if (total_error_in_state[newstate][x7 + 1] == -1)
+			{
+				total_error_in_state[newstate][x7 + 1] = remaining;
+				char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
+			}
+
+			error += remaining;
+
+			if (error < lowest_error)
+			{
+				lowest_error = error;
+				lowest_char = MODE7_HOLD_GFX;
+			}
 		}
 
-		error += remaining;
-
-		if (error < lowest_error)
+		// We could exit hold graphics mode..
+		else
 		{
-			lowest_error = error;
-			lowest_char = MODE7_BLACK_BG;
+			int newstate = GET_STATE(fg, bg, false, MODE7_BLANK);
+			int error = get_error_for_char(x7, y7, MODE7_RELEASE_GFX, fg, bg, false, MODE7_BLANK);
+			int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, false, MODE7_BLANK);
+
+			if (total_error_in_state[newstate][x7 + 1] == -1)
+			{
+				total_error_in_state[newstate][x7 + 1] = remaining;
+				char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
+			}
+
+			error += remaining;
+
+			if (error < lowest_error)
+			{
+				lowest_error = error;
+				lowest_char = MODE7_RELEASE_GFX;
+			}
 		}
 	}
-
-#if 0
-	// If previous character was a graphic we could hold it!
-	if (prev_char < 128 && prev_char != MODE7_BLANK )
-	{
-		// Hold character becomes previous character
-		int error = get_error_for_char(x7, y7, MODE7_HOLD_GFX, fg, bg, hold_char) + get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, prev_char, MODE7_HOLD_GFX, &best_char);
-
-		if (error < lowest_error)
-		{
-			lowest_error = error;
-			*return_char = MODE7_HOLD_GFX;
-		}
-	}
-
-	// If hold character is set we could release it!
-	if (hold_char != MODE7_BLANK)
-	{
-		// Hold character becomes blank
-		int error = get_error_for_char(x7, y7, MODE7_RELEASE_GFX, fg, bg, hold_char) + get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, MODE7_BLANK, MODE7_RELEASE_GFX, &best_char);
-
-		if (error < lowest_error)
-		{
-			lowest_error = error;
-			*return_char = MODE7_RELEASE_GFX;
-		}
-	}
-#endif
 
 	for (int c = 1; c < 8; c++)
 	{
-		// We could change our fg colour
+		// We could change our fg colour!
 		if (c != fg)
 		{
-			int newstate = GET_STATE(c, bg, hold_char, graphic_char);
+			int newstate = GET_STATE(c, bg, hold_mode, last_gfx_char);
 
-			int error = get_error_for_char(x7, y7, MODE7_GFX_COLOUR + c, c, bg, hold_char);
+			int error = get_error_for_char(x7, y7, MODE7_GFX_COLOUR + c, c, bg, hold_mode, last_gfx_char);
 
-			int remaining = get_error_for_remainder_of_line(x7 + 1, y7, c, bg, hold_char, MODE7_GFX_COLOUR + c);
+			int remaining = get_error_for_remainder_of_line(x7 + 1, y7, c, bg, hold_mode, last_gfx_char);
 
 			if (total_error_in_state[newstate][x7 + 1] == -1)
 			{
@@ -397,12 +459,11 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, unsigned cha
 		}
 	}
 
-	// If we have a graphic character or blank we could use this!
 	if (graphic_char != MODE7_BLANK)
 	{
-		int newstate = GET_STATE(fg, bg, hold_char, prev_char);
-		int error = get_error_for_char(x7, y7, graphic_char, fg, bg, hold_char);
-		int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, hold_char, graphic_char);
+		int newstate = GET_STATE(fg, bg, hold_mode, global_use_hold ? graphic_char : MODE7_BLANK);
+		int error = get_error_for_char(x7, y7, graphic_char, fg, bg, hold_mode, global_use_hold ? graphic_char : MODE7_BLANK);
+		int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, hold_mode, global_use_hold ? graphic_char : MODE7_BLANK);
 
 		if (total_error_in_state[newstate][x7 + 1] == -1)
 		{
@@ -437,6 +498,8 @@ int main(int argc, char **argv)
 	const int gmode = cimg_option("-g", 0, "Colour to greyscale conversion (0=none, 1=red only, 2=green only, 3=blue only, 4=simple average, 5=luminence preserving");
 	const int thresh = cimg_option("-t", 127, "B&W threshold value");
 	const int dither = cimg_option("-d", 0, "Dither mode (0=none/threshold only, 1=floyd steinberg, 2=ordered 2x2, 3=ordered 3x3");
+	const bool no_hold = cimg_option("-nohold", false, "Disallow Hold Graphics control code");
+	const bool no_fill = cimg_option("-nofill", false, "Disallow New Background control code");
 	const bool save = cimg_option("-save", false, "Save individual MODE7 frames");
 	const bool simg = cimg_option("-simg", false, "Save individual image frames");
 	const bool sep = cimg_option("-sep", false, "Separated graphics");
@@ -445,9 +508,11 @@ int main(int argc, char **argv)
 	if (cimg_option("-h", false, 0)) std::exit(0);
 	if (shortname == NULL)  std::exit(0);
 
+	global_use_hold = !no_hold;
+	global_use_fill = !no_fill;
+
 	char filename[256];
 	char input[256];
-
 
 	int totaldeltas = 0;
 	int totalbytes = 0;
@@ -762,10 +827,10 @@ int main(int argc, char **argv)
 			clear_error_char_arrays();
 
 			// This is our initial state of the screen
-			int state = GET_STATE(7, 0, MODE7_BLANK, MODE7_BLANK);
+			int state = GET_STATE(7, 0, false, MODE7_BLANK);
 
 			// Kick off recursive error calculation with that state
-			int error = get_error_for_remainder_of_line((MODE7_WIDTH - FRAME_WIDTH), y7, 7, 0, MODE7_BLANK, MODE7_BLANK);
+			int error = get_error_for_remainder_of_line((MODE7_WIDTH - FRAME_WIDTH), y7, 7, 0, false, MODE7_BLANK);
 			char_for_xpos_in_state[state][(MODE7_WIDTH - FRAME_WIDTH)] = output[(MODE7_WIDTH - FRAME_WIDTH)];
 
 			// Copy the resulting character data into MODE 7 screen
