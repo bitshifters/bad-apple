@@ -6,12 +6,12 @@
 
 using namespace cimg_library;
 
-#define MODE7_COL0		151
-#define MODE7_COL1		(sep ? 154 : 32)
-#define MODE7_BLANK		32
-#define MODE7_WIDTH		40
-#define MODE7_HEIGHT	25
-#define MODE7_MAX_SIZE	(MODE7_WIDTH * MODE7_HEIGHT)
+#define MODE7_COL0			151
+#define MODE7_COL1			(sep ? 154 : 32)
+#define MODE7_BLANK			32
+#define MODE7_WIDTH			40
+#define MODE7_HEIGHT		25
+#define MODE7_MAX_SIZE		(MODE7_WIDTH * MODE7_HEIGHT)
 
 #define MODE7_BLACK_BG		156
 #define MODE7_NEW_BG		157
@@ -19,29 +19,81 @@ using namespace cimg_library;
 #define MODE7_RELEASE_GFX	159
 #define MODE7_GFX_COLOUR	144
 
-#define JPG_W			src._width		// w				// 76
-#define JPG_H			src._height		// h				// 57 = 4:3  // 42 = 16:9
-#define FRAME_WIDTH		(JPG_W/2)
-#define FRAME_HEIGHT	(JPG_H/3)
-#define NUM_FRAMES		frames			// 5367		// 5478
-#define FRAME_SIZE		(MODE7_WIDTH * FRAME_HEIGHT)
+#define JPG_W				src._width		// w				// 76
+#define JPG_H				src._height		// h				// 57 = 4:3  // 42 = 16:9
+#define FRAME_WIDTH			(JPG_W/2)
+#define FRAME_HEIGHT		(JPG_H/3)
+#define NUM_FRAMES			frames			// 5367		// 5478
+#define FRAME_SIZE			(MODE7_WIDTH * FRAME_HEIGHT)
 
-#define FILENAME		shortname		// "bad"	// "grav"
-#define DIRECTORY		shortname		// "bad"	// "grav"
+#define FILENAME			shortname
+#define DIRECTORY			shortname
 
-#define _ZERO_FRAME_PRESET TRUE		// whether our zero frame is already setup for MODE 7
+#define _ZERO_FRAME_PRESET	TRUE		// whether our zero frame is already setup for MODE 7
 
-#define CLAMP(a,low,high)		((a) < (low) ? (low) : ((a) > (high) ? (high) : (a)))
-#define THRESHOLD(a,t)			((a) >= (t) ? 255 : 0)
-#define LO(a)					((a) % 256)
-#define HI(a)					((a) / 256)
+#define CLAMP(a,low,high)	((a) < (low) ? (low) : ((a) > (high) ? (high) : (a)))
+#define THRESHOLD(a,t)		((a) >= (t) ? 255 : 0)
+#define LO(a)				((a) % 256)
+#define HI(a)				((a) / 256)
 
-#define _COLOUR_DEBUG		TRUE
+#define _COLOUR_DEBUG		FALSE
+
+#define _USE_16_BIT_PACK	FALSE
+
+#if _USE_16_BIT_PACK
+#define BYTES_PER_DELTA		2
+#else
+#define BYTES_PER_DELTA		3
+#endif
 
 static CImg<unsigned char> src;
 static unsigned char prevmode7[MODE7_MAX_SIZE];
 static unsigned char delta[MODE7_MAX_SIZE];
 static unsigned char mode7[MODE7_MAX_SIZE];
+
+#define MAX_STATE (1U << 6)
+#define GET_STATE(fg,bg,hold,prev)	(((bg) << 3) | (fg))
+
+static int total_error_in_state[MAX_STATE][MODE7_WIDTH + 1];
+static unsigned char char_for_xpos_in_state[MAX_STATE][MODE7_WIDTH + 1];
+static unsigned char output[MODE7_WIDTH];
+
+
+void clear_error_char_arrays(void)
+{
+	for (int state = 0; state < MAX_STATE; state++)
+	{
+		for (int x = 0; x <= MODE7_WIDTH; x++)
+		{
+			total_error_in_state[state][x] = -1;
+			char_for_xpos_in_state[state][x] = 'X';
+		}
+	}
+}
+
+int get_state_for_char(unsigned char proposed_char, int old_state)
+{
+	int fg = old_state & 7;
+	int bg = (old_state >> 3) & 7;
+
+	if (proposed_char == MODE7_NEW_BG)
+	{
+		bg = fg;
+	}
+
+	if (proposed_char == MODE7_BLACK_BG)
+	{
+		bg = 0;
+	}
+
+	if (proposed_char > MODE7_GFX_COLOUR && proposed_char < MODE7_GFX_COLOUR + 8)
+	{
+		fg = proposed_char - MODE7_GFX_COLOUR;
+	}
+
+	return GET_STATE(fg, bg, MODE7_BLANK, MODE7_BLANK);
+}
+
 
 int get_colour_from_rgb(unsigned char r, unsigned char g, unsigned char b)
 {
@@ -82,6 +134,8 @@ unsigned char pixel_to_grey(int mode, unsigned char r, unsigned char g, unsigned
 // If we don't have pixels then need to decide whether it is better to insert a control code or leave empty
 // Possible control codes are: new fg colour, fill (bg colour = fg colour), no fill (bg colour = black), hold graphics (hold char = prev char), release graphics (hold char = empty)
 // "Better" means that the "error" for the rest of the line (appearance on screen vs actual image = deviation) is minimised
+
+// Hold graphics mode means use last known (used on the line) graphic character in place of space when emitting a control code (reset if using alphanumerics not graphics)
 
 // Functions - get_error_for_char(int x7, int y7, unsigned char code, int fg, int bg, unsigned char hold_char)
 int get_error_for_char(int x7, int y7, unsigned char proposed_char, int fg, int bg, unsigned char hold_char)
@@ -170,10 +224,15 @@ int get_error_for_char(int x7, int y7, unsigned char proposed_char, int fg, int 
 	return error;
 }
 
-int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, unsigned char hold_char, unsigned char prev_char, unsigned char *return_char)
+int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, unsigned char hold_char, unsigned char prev_char)
 {
 	if (x7 >= MODE7_WIDTH)
 		return 0;
+
+	int state = GET_STATE(fg, bg, hold_char, prev_char);
+
+	if (total_error_in_state[state][x7] != -1)
+		return total_error_in_state[state][x7];
 
 //	printf("get_error_for_remainder_of_line(%d, %d, %d, %d, %d, %d)\n", x7, y7, fg, bg, hold_char, prev_char);
 
@@ -182,7 +241,7 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, unsigned cha
 	int y = y7 * 3;
 	unsigned char graphic_char = 0;
 	int lowest_error = INT_MAX;
-	unsigned char best_char;
+	unsigned char lowest_char = 'Z';
 
 	if (current_char != MODE7_BLANK)
 	{
@@ -197,6 +256,10 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, unsigned cha
 			+ (get_colour_from_rgb(src(x, y + 2, 0), src(x, y + 2, 1), src(x, y + 2, 2)) == bg ? 0 : 16)				// (x,y+2) = bit 4
 			+ (get_colour_from_rgb(src(x + 1, y + 2, 0), src(x + 1, y + 2, 1), src(x + 1, y + 2, 2)) == bg ? 0 : 64);			// (x+1,y+2) = bit 6
 	}
+	else
+	{
+		graphic_char = MODE7_BLANK;
+	}
 
 	// Possible characters are: 1 + 1 + 6 + 1 + 1 + 1 + 1 = 12 possibilities x 40 columns = 12 ^ 40 combinations.  That's not going to work :)
 	// Possible states for a given cell: fg=0-7, bg=0-7, hold_gfx=6 pixels : total = 12 bits = 4096 possible states
@@ -206,45 +269,53 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, unsigned cha
 	// Graphic char (if set)
 	// Stay blank (if not)
 	// Set graphic colour (colour != fg) - 6
-	// Fill (if bg == 0)
+	// Fill (if bg != fg)
 	// No fill (if bg != 0)
-	// Hold graphics (if prev char is a graphic char)
-	// Release graphics
+	// Hold graphics - TODO
+	// Release graphics- TODO
 
-	// If we have a graphic character we could use this!
-	if (graphic_char)
+	// If we have a graphic character or blank we could use this!
+	if (graphic_char == MODE7_BLANK)
 	{
-		int error = get_error_for_char(x7, y7, graphic_char, fg, bg, hold_char) + get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, hold_char, graphic_char, &best_char);
+		int newstate = GET_STATE(fg, bg, hold_char, prev_char);
+		int error = get_error_for_char(x7, y7, graphic_char, fg, bg, hold_char);
+		int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, hold_char, graphic_char);
+
+		if (total_error_in_state[newstate][x7 + 1] == -1)
+		{
+			total_error_in_state[newstate][x7 + 1] = remaining;
+			char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
+		}
+
+		error += remaining;
 
 		if (error < lowest_error)
 		{
 			lowest_error = error;
-			*return_char = graphic_char;
-		}
-	}
-	// If we are blank could just keep this!
-	
-	if( !graphic_char )
-	{
-		int error = get_error_for_char(x7, y7, MODE7_BLANK, fg, bg, hold_char) + get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, hold_char, MODE7_BLANK, &best_char);
-
-		if (error < lowest_error)
-		{
-			lowest_error = error;
-			*return_char = MODE7_BLANK;
+			lowest_char = graphic_char;
 		}
 	}
 
-	// If the background is black we could enable fill!
-	if (bg == 0)
+	// If the background is black we could enable fill! - you idiot - can enable fill at any time if fg colour has changed since last time!
+	if (bg != fg)
 	{
 		// Bg colour becomes fg colour
-		int error = get_error_for_char(x7, y7, MODE7_NEW_BG, fg, bg, hold_char) + get_error_for_remainder_of_line(x7 + 1, y7, fg, fg, hold_char, MODE7_NEW_BG, &best_char);
+		int newstate = GET_STATE(fg, fg, hold_char, prev_char);
+		int error = get_error_for_char(x7, y7, MODE7_NEW_BG, fg, fg, hold_char);
+		int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, fg, hold_char, MODE7_NEW_BG);
+
+		if (total_error_in_state[newstate][x7 + 1] == -1)
+		{
+			total_error_in_state[newstate][x7 + 1] = remaining;
+			char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
+		}
+
+		error += remaining;
 
 		if (error < lowest_error)
 		{
 			lowest_error = error;
-			*return_char = MODE7_NEW_BG;
+			lowest_char = MODE7_NEW_BG;
 		}
 	}
 
@@ -252,15 +323,26 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, unsigned cha
 	if (bg != 0)
 	{
 		// Bg colour becomes black
-		int error = get_error_for_char(x7, y7, MODE7_BLACK_BG, fg, bg, hold_char) + get_error_for_remainder_of_line(x7 + 1, y7, fg, 0, hold_char, MODE7_BLACK_BG, &best_char);
+		int newstate = GET_STATE(fg, 0, hold_char, prev_char);
+		int error = get_error_for_char(x7, y7, MODE7_BLACK_BG, fg, 0, hold_char);
+		int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, 0, hold_char, MODE7_BLACK_BG);
+
+		if (total_error_in_state[newstate][x7 + 1] == -1)
+		{
+			total_error_in_state[newstate][x7 + 1] = remaining;
+			char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
+		}
+
+		error += remaining;
 
 		if (error < lowest_error)
 		{
 			lowest_error = error;
-			*return_char = MODE7_BLACK_BG;
+			lowest_char = MODE7_BLACK_BG;
 		}
 	}
 
+#if 0
 	// If previous character was a graphic we could hold it!
 	if (prev_char < 128 && prev_char != MODE7_BLANK )
 	{
@@ -286,23 +368,60 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, unsigned cha
 			*return_char = MODE7_RELEASE_GFX;
 		}
 	}
+#endif
 
 	for (int c = 1; c < 8; c++)
 	{
 		// We could change our fg colour
 		if (c != fg)
 		{
-			int error = get_error_for_char(x7, y7, MODE7_GFX_COLOUR + c, fg, bg, hold_char) + get_error_for_remainder_of_line(x7 + 1, y7, c, bg, hold_char, MODE7_GFX_COLOUR + c, &best_char);
+			int newstate = GET_STATE(c, bg, hold_char, graphic_char);
+
+			int error = get_error_for_char(x7, y7, MODE7_GFX_COLOUR + c, c, bg, hold_char);
+
+			int remaining = get_error_for_remainder_of_line(x7 + 1, y7, c, bg, hold_char, MODE7_GFX_COLOUR + c);
+
+			if (total_error_in_state[newstate][x7 + 1] == -1)
+			{
+				total_error_in_state[newstate][x7 + 1] = remaining;
+				char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
+			}
+
+			error += remaining;
 
 			if (error < lowest_error)
 			{
 				lowest_error = error;
-				*return_char = MODE7_GFX_COLOUR + c;
+				lowest_char = MODE7_GFX_COLOUR + c;
 			}
 		}
 	}
 
-//	printf("(%d, %d) returning char=%d lowest error=%d\n", x7, y7, *return_char, lowest_error);
+	// If we have a graphic character or blank we could use this!
+	if (graphic_char != MODE7_BLANK)
+	{
+		int newstate = GET_STATE(fg, bg, hold_char, prev_char);
+		int error = get_error_for_char(x7, y7, graphic_char, fg, bg, hold_char);
+		int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, hold_char, graphic_char);
+
+		if (total_error_in_state[newstate][x7 + 1] == -1)
+		{
+			total_error_in_state[newstate][x7 + 1] = remaining;
+			char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
+		}
+
+		error += remaining;
+
+		if (error < lowest_error)
+		{
+			lowest_error = error;
+			lowest_char = graphic_char;
+		}
+	}
+
+//	printf("(%d, %d) returning char=%d lowest error=%d\n", x7, y7, lowest_char, lowest_error);
+
+	output[x7] = lowest_char;
 
 	return lowest_error;
 }
@@ -311,7 +430,6 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, unsigned cha
 int main(int argc, char **argv)
 {
 	cimg_usage("MODE 7 video convertor.\n\nUsage : mode7video [options]");
-//	const char *const geom = cimg_option("-g", "76x57", "Input size (ignored for now)");
 	const int frames = cimg_option("-n", 0, "Last frame number");
 	const int start = cimg_option("-s", 1, "Start frame number");
 	const char *const shortname = cimg_option("-i", (char*)0, "Input (directory / short name)");
@@ -323,10 +441,6 @@ int main(int argc, char **argv)
 	const bool simg = cimg_option("-simg", false, "Save individual image frames");
 	const bool sep = cimg_option("-sep", false, "Separated graphics");
 	const bool verbose = cimg_option("-v", false, "Verbose output");
-//	const int cbr_frames = cimg_option("-cbr", 0, "CBR frames [experimental/unfinished]");
-
-//	int w = 76, h = 57;
-//	std::sscanf(geom, "%d%*c%d", &w, &h);
 
 	if (cimg_option("-h", false, 0)) std::exit(0);
 	if (shortname == NULL)  std::exit(0);
@@ -580,11 +694,12 @@ int main(int argc, char **argv)
 			//			+ (src(x, y + 2, 0)			? 16 : 0)			// (x,y+2) = bit 4
 			//			+ (src(x + 1, y + 2, 0)		? 64 : 0);			// (x+1,y+2) = bit 6
 
-				// Just indicate pixels or not
+				// Just indicate pixels or not to speed up MODE 7 conversion
 				mode7[(y7 * MODE7_WIDTH) + (x7)] = colour_counts_per_char[x7][0] == 6 ? 32 : 255;
 
 				x++;
 
+				// Do some colour counting on this line (not actually nececssary)
 
 				int unique_colours = 0;
 				int dominant_colour = 0;
@@ -631,8 +746,8 @@ int main(int argc, char **argv)
 
 			// Here we have:
 			// pixel data turned into graphic characters in mode7 array - actually just an indication if pixels in cell
-			// counts of each colour in a character cell
-			// proposed fg and bg colour per character cell
+			// counts of each colour in a character cell - not useful?
+			// proposed fg and bg colour per character cell - could be used as start of line control code?
 
 			// Reset state as starting new character row
 			// State = fg colour + bg colour + hold character + prev character
@@ -643,54 +758,26 @@ int main(int argc, char **argv)
 			// Possible control codes are: new fg colour, fill (bg colour = fg colour), no fill (bg colour = black), hold graphics (hold char = prev char), release graphics (hold char = empty)
 			// "Better" means that the "error" for the rest of the line (appearance on screen vs actual image = deviation) is minimised
 
-			// Functions - get_best_char_for_cell(int x7, int y7, int fg, int bg, unsigned char hold_char, unsigned char prev_char)
-			// Functions - get_char_and_error_for_pixels_given_state(int x7, int y7, int fg, int bg)
-			// Functions - get_error_for_char(int x7, int y7, unsigned char code, int fg, int bg, unsigned char hold_char)
+			// Clear our array of error values for each state & x position
+			clear_error_char_arrays();
 
-			unsigned char hold_char = MODE7_BLANK;
-			unsigned char prev_char = MODE7_BLANK;
-			int fg = 7;
-			int bg = 0;
+			// This is our initial state of the screen
+			int state = GET_STATE(7, 0, MODE7_BLANK, MODE7_BLANK);
 
+			// Kick off recursive error calculation with that state
+			int error = get_error_for_remainder_of_line((MODE7_WIDTH - FRAME_WIDTH), y7, 7, 0, MODE7_BLANK, MODE7_BLANK);
+			char_for_xpos_in_state[state][(MODE7_WIDTH - FRAME_WIDTH)] = output[(MODE7_WIDTH - FRAME_WIDTH)];
+
+			// Copy the resulting character data into MODE 7 screen
 			for (int x7 = (MODE7_WIDTH - FRAME_WIDTH); x7 < MODE7_WIDTH; x7++)
 			{
-				unsigned char best_char;
-				
-				printf("(%d, %d) fg=%d bg=%d hold=%d prev=%d\n", x7, y7, fg, bg, hold_char, prev_char);
-
-				int error = get_error_for_remainder_of_line(x7, y7, fg, bg, hold_char, prev_char, &best_char);
-
-				printf("(%d, %d) best char = %d\n", x7, y7, best_char);
+				// Copy character chosen in this position for this state
+				unsigned char best_char = char_for_xpos_in_state[state][x7];
 
 				mode7[(y7 * MODE7_WIDTH) + (x7)] = best_char;
 
-				// Update state:
-				if (best_char == MODE7_BLACK_BG)
-				{
-					bg = 0;
-				}
-
-				if (best_char == MODE7_NEW_BG)
-				{
-					bg = fg;
-				}
-
-				if (best_char == MODE7_HOLD_GFX)
-				{
-					hold_char = prev_char;
-				}
-
-				if (best_char == MODE7_RELEASE_GFX)
-				{
-					hold_char = MODE7_BLANK;
-				}
-
-				if (best_char > MODE7_GFX_COLOUR && best_char < MODE7_GFX_COLOUR+8)
-				{
-					fg = best_char - MODE7_GFX_COLOUR;
-				}
-
-				prev_char = best_char;
+				// Update the state
+				state = get_state_for_char(best_char, state);
 			}
 
 			// printf("\n");
@@ -704,7 +791,7 @@ int main(int argc, char **argv)
 //			if (i % 40 == 39)printf("\n");
 //		}
 
-		if (n == 1)
+		if (n == start)
 		{
 			*ptr++ = LO(FRAME_SIZE);
 			*ptr++ = HI(FRAME_SIZE);
@@ -736,7 +823,7 @@ int main(int argc, char **argv)
 		if (numdeltas > maxdeltas) maxdeltas = numdeltas;
 		delta_counts[n] = numdeltas;
 
-		if (numdeltas > FRAME_SIZE/3)
+		if (numdeltas > FRAME_SIZE/BYTES_PER_DELTA)
 		{
 			numdeltabytes = FRAME_SIZE;
 			resetframes++;
@@ -754,7 +841,7 @@ int main(int argc, char **argv)
 		}
 		else
 		{
-			numdeltabytes = numdeltas * 3;
+			numdeltabytes = numdeltas * BYTES_PER_DELTA;
 
 			*ptr++ = LO(numdeltas);
 			*ptr++ = HI(numdeltas);
@@ -766,7 +853,7 @@ int main(int argc, char **argv)
 				if (delta[i] != 0)
 				{
 					unsigned char byte = mode7[i];			//  ^ prevmode7[i] for EOR with prev.
-#if 0
+#if _USE_16_BIT_PACK
 
 					unsigned short pack = byte & 31;		// remove bits 5 & 6
 
@@ -866,15 +953,16 @@ int main(int argc, char **argv)
 	*ptr++ = 0xff;
 	*ptr++ = 0xff;
 
-	printf("\ntotal frames = %d\n", NUM_FRAMES);
+	int total_frames = NUM_FRAMES - start + 1;
+	printf("\ntotal frames = %d\n", total_frames);
 	printf("frame size = %d\n", FRAME_SIZE);
 	printf("total deltas = %d\n", totaldeltas);
 	printf("total bytes = %d\n", totalbytes);
 	printf("max deltas = %d\n", maxdeltas);
 	printf("reset frames = %d\n", resetframes);
-	printf("deltas / frame = %f\n", totaldeltas / (float)NUM_FRAMES);
-	printf("bytes / frame = %f\n", totalbytes / (float)NUM_FRAMES);
-	printf("bytes / second = %f\n", 25.0f * totalbytes / (float)NUM_FRAMES);
+	printf("deltas / frame = %f\n", totaldeltas / (float)total_frames);
+	printf("bytes / frame = %f\n", totalbytes / (float)total_frames);
+	printf("bytes / second = %f\n", 25.0f * totalbytes / (float)total_frames);
 	printf("beeb size = %d bytes\n", ptr - beeb);
 
 	sprintf(filename, "%s\\%s_beeb.bin", DIRECTORY, FILENAME);
