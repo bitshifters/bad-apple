@@ -26,6 +26,8 @@ using namespace cimg_library;
 #define NUM_FRAMES			frames			// 5367		// 5478
 #define FRAME_SIZE			(MODE7_WIDTH * FRAME_HEIGHT)
 
+#define FRAME_FIRST_COLUMN	(MODE7_WIDTH - FRAME_WIDTH)
+
 #define FILENAME			shortname
 #define DIRECTORY			shortname
 
@@ -264,24 +266,12 @@ int get_error_for_char(int x7, int y7, unsigned char proposed_char, int fg, int 
 	return error;
 }
 
-int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, bool hold_mode, unsigned char last_gfx_char)
+unsigned char get_graphic_char_from_image(int x7, int y7, int fg, int bg)
 {
-	if (x7 >= MODE7_WIDTH)
-		return 0;
-
-	int state = GET_STATE(fg, bg, hold_mode, last_gfx_char);
-
-	if (total_error_in_state[state][x7] != -1)
-		return total_error_in_state[state][x7];
-
-//	printf("get_error_for_remainder_of_line(%d, %d, %d, %d, %d, %d)\n", x7, y7, fg, bg, hold_char, prev_char);
-
 	unsigned char current_char = mode7[(y7 * MODE7_WIDTH) + (x7)];
-	int x = (x7 - (MODE7_WIDTH - FRAME_WIDTH)) * 2;
+	int x = (x7 - FRAME_FIRST_COLUMN) * 2;
 	int y = y7 * 3;
 	unsigned char graphic_char = 0;
-	int lowest_error = INT_MAX;
-	unsigned char lowest_char = 'Z';
 
 	if (current_char != MODE7_BLANK)
 	{
@@ -300,6 +290,25 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, bool hold_mo
 	{
 		graphic_char = MODE7_BLANK;
 	}
+
+	return graphic_char;
+}
+
+int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, bool hold_mode, unsigned char last_gfx_char)
+{
+	if (x7 >= MODE7_WIDTH)
+		return 0;
+
+	int state = GET_STATE(fg, bg, hold_mode, last_gfx_char);
+
+	if (total_error_in_state[state][x7] != -1)
+		return total_error_in_state[state][x7];
+
+//	printf("get_error_for_remainder_of_line(%d, %d, %d, %d, %d, %d)\n", x7, y7, fg, bg, hold_char, prev_char);
+
+	unsigned char graphic_char = get_graphic_char_from_image(x7, y7, fg, bg);
+	int lowest_error = INT_MAX;
+	unsigned char lowest_char = 'Z';
 
 	// Possible characters are: 1 + 1 + 6 + 1 + 1 + 1 + 1 = 12 possibilities x 40 columns = 12 ^ 40 combinations.  That's not going to work :)
 	// Possible states for a given cell: fg=0-7, bg=0-7, hold_gfx=6 pixels : total = 12 bits = 4096 possible states
@@ -341,7 +350,7 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, bool hold_mo
 	{
 		if (bg != fg)
 		{
-			// Bg colour becomes fg colour
+			// Bg colour becomes fg colour immediately in this cell
 			int newstate = GET_STATE(fg, fg, hold_mode, last_gfx_char);
 			int error = get_error_for_char(x7, y7, MODE7_NEW_BG, fg, fg, hold_mode, last_gfx_char);
 			int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, fg, hold_mode, last_gfx_char);
@@ -364,7 +373,7 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, bool hold_mo
 		// If the background is not black we could disable fill!
 		if (bg != 0)
 		{
-			// Bg colour becomes black
+			// Bg colour becomes black immediately in this cell
 			int newstate = GET_STATE(fg, 0, hold_mode, last_gfx_char);
 			int error = get_error_for_char(x7, y7, MODE7_BLACK_BG, fg, 0, hold_mode, last_gfx_char);
 			int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, 0, hold_mode, last_gfx_char);
@@ -391,7 +400,7 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, bool hold_mo
 		if (!hold_mode)
 		{
 			int newstate = GET_STATE(fg, bg, true, last_gfx_char);
-			int error = get_error_for_char(x7, y7, MODE7_HOLD_GFX, fg, bg, true, last_gfx_char);
+			int error = get_error_for_char(x7, y7, MODE7_HOLD_GFX, fg, bg, true, last_gfx_char);			// hold control code does adopt last graphic character immediately
 			int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, true, last_gfx_char);
 
 			if (total_error_in_state[newstate][x7 + 1] == -1)
@@ -439,9 +448,10 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, bool hold_mo
 		{
 			int newstate = GET_STATE(c, bg, hold_mode, last_gfx_char);
 
-			int error = get_error_for_char(x7, y7, MODE7_GFX_COLOUR + c, c, bg, hold_mode, last_gfx_char);
+			// The fg colour doesn't actually take effect until next cell - so any hold char here will be in current fg colour
+			int error = get_error_for_char(x7, y7, MODE7_GFX_COLOUR + c, fg, bg, hold_mode, last_gfx_char);			// old state
 
-			int remaining = get_error_for_remainder_of_line(x7 + 1, y7, c, bg, hold_mode, last_gfx_char);
+			int remaining = get_error_for_remainder_of_line(x7 + 1, y7, c, bg, hold_mode, last_gfx_char);			// new state
 
 			if (total_error_in_state[newstate][x7 + 1] == -1)
 			{
@@ -826,15 +836,40 @@ int main(int argc, char **argv)
 			// Clear our array of error values for each state & x position
 			clear_error_char_arrays();
 
-			// This is our initial state of the screen
-			int state = GET_STATE(7, 0, false, MODE7_BLANK);
+			int min_error = INT_MAX;
+			int min_colour = 0;
+
+			// Determine best initial state for line
+			for (int fg = 7; fg > 0; fg--)
+			{
+				// What would our first character look like in this state?
+				unsigned char first_char = get_graphic_char_from_image(FRAME_FIRST_COLUMN, y7, fg, 0);
+
+				// What's the error for that character?
+				int error = get_error_for_char(FRAME_FIRST_COLUMN, y7, first_char, fg, 0, false, MODE7_BLANK);
+
+				// Find the lowest error corresponding to our possible start states
+				if (error < min_error)
+				{
+					min_error = error;
+					min_colour = fg;
+				}
+			}
+
+			// This is our initial state of the line
+			int state = GET_STATE(min_colour, 0, false, MODE7_BLANK);
+
+			// Set this state before frame begins
+			mode7[(y7 * MODE7_WIDTH) + (FRAME_FIRST_COLUMN - 1)] = MODE7_GFX_COLOUR + min_colour;
 
 			// Kick off recursive error calculation with that state
-			int error = get_error_for_remainder_of_line((MODE7_WIDTH - FRAME_WIDTH), y7, 7, 0, false, MODE7_BLANK);
-			char_for_xpos_in_state[state][(MODE7_WIDTH - FRAME_WIDTH)] = output[(MODE7_WIDTH - FRAME_WIDTH)];
+			int error = get_error_for_remainder_of_line(FRAME_FIRST_COLUMN, y7, min_colour, 0, false, MODE7_BLANK);
+
+			// Store first character
+			char_for_xpos_in_state[state][FRAME_FIRST_COLUMN] = output[FRAME_FIRST_COLUMN];
 
 			// Copy the resulting character data into MODE 7 screen
-			for (int x7 = (MODE7_WIDTH - FRAME_WIDTH); x7 < MODE7_WIDTH; x7++)
+			for (int x7 = FRAME_FIRST_COLUMN; x7 < MODE7_WIDTH; x7++)
 			{
 				// Copy character chosen in this position for this state
 				unsigned char best_char = char_for_xpos_in_state[state][x7];
