@@ -19,6 +19,8 @@ osgbpb = &FFD1
 
 argv = &F2
 
+IRQ1V = &204
+IRQ2V = &206
 EVENTV = &0220
 
 INKEY_esc = 112
@@ -35,7 +37,6 @@ NOP_OP = $ea
 
 _DEBUG = TRUE
 _WAIT_KEYPRESS = FALSE				; could implement play/pause/step
-_ENABLE_EVENTS = TRUE
 _ENABLE_WALLCLOCK = TRUE
 _COUNT_DECRUNCHES = FALSE
 _TRY_TO_MATCH_FRAMERATE = FALSE
@@ -91,7 +92,9 @@ DISK1_last_track = 79		; could potentially deduce these from DFS catalog
 DISK2_first_track = 1
 DISK2_last_track = 79		; doesn't actually matter as data stream should indicate end of buffer
 
-STREAM_buffer_size = (6 * DFS_track_size)
+STREAM_buffer_size = (4 * DFS_track_size)
+
+TIMER_latch = ((56 + 128) * 64) - 2				; 56 scanlines for overscan + retrace + 128 scanlines = half way down frame
 
 \ ******************************************************************
 \ *	Define fast (zero page) runtime variables
@@ -118,8 +121,6 @@ ORG &7B
 GUARD &9F
 
 \\ System vars
-.old_eventv				SKIP 2
-
 .writeptr				SKIP 2
 
 .num_deltas				SKIP 2
@@ -148,6 +149,8 @@ ENDIF
 IF _COUNT_DECRUNCHES
 .decrunch_count			SKIP 2
 ENDIF
+
+.old_irqv				SKIP 2
 
 \ ******************************************************************
 \ *	Start address to be saved
@@ -264,11 +267,22 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 	ADC VID_frame_start+1
 	STA VID_frame_end+1
 
-	IF _ENABLE_EVENTS
-	LDX #LO(decode_eventv)
-	LDY #HI(decode_eventv)
-	JSR start_eventv
-	ENDIF
+	\\ Enable irq
+	{
+		SEI
+		LDA IRQ1V:STA old_irqv
+		LDA IRQ1V+1:STA old_irqv+1
+	
+		LDA #LO(irq_handler):STA IRQ1V
+		LDA #HI(irq_handler):STA IRQ1V+1		; set interrupt handler
+
+		LDA #0						; A=00000000
+		STA &FE4B					; R11=Auxillary Control Register (timer 1 one shot mode)
+
+		LDA #&C0					; A=11000000
+		STA &FE4E					; R14=Interrupt Enable (enable timer 1 interrupt)
+		CLI
+	}
 
 	\\ Top of our loop
 	.next_frame
@@ -277,50 +291,8 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 	LDA #19
 	JSR osbyte
 
-	IF _ENABLE_EVENTS = FALSE
-	\\ Increment frame counter
-	{
-		INC frame_no
-		BNE no_carry
-		INC frame_no+1
-		.no_carry
-	}
-
-	\\ Decode frame header
-	JSR decode_frame_header
-	BCS read_error
-	ENDIF
-
 	IF _DEBUG
 	JSR write_debug_info
-	ENDIF
-
-	IF _ENABLE_EVENTS = FALSE
-	IF _WAIT_KEYPRESS
-	{
-		.no_key_pressed
-
-		\\ Check for pressed keys
-		LDA #121
-		LDX #&10
-		JSR osbyte
-
-		\\ Still holding same key
-		CPX key_held
-		BEQ no_key_pressed
-
-		\\ Remember current key
-		STX key_held
-
-		\\ Any key pressed?
-		CPX #&FF
-		BEQ no_key_pressed
-	}
-	ENDIF
-
-	\\ Decode our video frame
-	JSR decode_frame_data
-	BCS read_error
 	ENDIF
 
 	\\ Load more data if needed
@@ -345,9 +317,10 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 	JMP next_frame
 
 	.track_load_error
-	IF _ENABLE_EVENTS
-	JSR stop_eventv
-	ENDIF
+	SEI
+	LDA old_irqv:STA IRQ1V
+	LDA old_irqv+1:STA IRQ1V+1		; set interrupt handler
+	CLI
 
 	\\ Exit cleanly (we hope)
 	.return
@@ -521,15 +494,8 @@ IF _DEBUG
 	JSR debug_write_hex
 
 	INY
-	IF _ENABLE_EVENTS
 	LDA vsync_count
 	JSR debug_write_hex
-	ELSE
-	LDA num_deltas+1
-	JSR debug_write_hex
-	LDA num_deltas
-	JSR debug_write_hex
-	ENDIF
 
 	IF _ENABLE_WALLCLOCK
 	INY
@@ -773,6 +739,7 @@ ENDIF
 \ *	Event driven main loop
 \ ******************************************************************
 
+IF 0
 .decode_eventv
 {
 	php
@@ -857,7 +824,123 @@ ENDIF
 	plp
 	rts
 }
+ENDIF
 
+\ ******************************************************************
+\ * IRQ
+\ ******************************************************************
+
+.irq_handler
+{
+	LDA &FC
+	PHA
+
+	\\ Which interrupt?
+	LDA &FE4D
+	AND #2
+	BNE is_vsync
+
+	\\ Timer 1
+	LDA &FE4D
+	AND #&40
+	BEQ return_vsync
+
+	\\ Acknowledge Timer 1
+	STA &FE4D
+
+	\\ Check if we're doing work or not
+	LDA decode_lock
+	BNE return_timer
+
+	\\ Set a lock on our decode function
+	INC decode_lock
+	
+	\\ Increment frame counter
+	{
+		INC frame_no
+		BNE no_carry
+		INC frame_no+1
+		.no_carry
+	}
+
+	\\ Decode frame header
+	TXA:PHA:TYA:PHA
+	JSR decode_frame_header
+
+	\\ Check for error
+	BCS read_error
+
+	\\ Decode the video frame
+	CLI
+	JSR decode_frame_data						; <-- this is the slowest bit!
+	SEI
+
+	.read_error
+	PLA:TAY:PLA:TAX
+	BCC no_read_error
+
+	\\ Indicate error
+	INC error_flag
+	BNE return_timer
+
+	.no_read_error
+	\\ Indicate our frame rate
+	DEC vsync_count
+	IF _TRY_TO_MATCH_FRAMERATE
+	DEC vsync_count
+	ENDIF
+
+	\\ Remove our work lock
+	DEC decode_lock
+
+	\\ Pass on to OS IRQ handler
+	.return_timer
+	PLA				
+	STA &FC
+	JMP (old_irqv)		; RTI
+
+	.is_vsync
+	\\ Acknowledge vsync interrupt
+;	STA &FE4D						; if we do this then *FX19 stops working!
+
+	\\ Increment vsync counter
+	INC vsync_count
+
+	IF _ENABLE_WALLCLOCK
+	\\ Increment wall clock
+	CLC
+	LDA clock_vsync
+	ADC #1
+	CMP #50
+	BCC no_secs
+	INC clock_secs
+	SBC #50
+	.no_secs
+	STA clock_vsync
+	ENDIF
+
+	\\ If we're already busy just exit function
+	LDA decode_lock
+	BNE return_vsync
+
+	\\ If we're ahead of video frame rate early out
+	IF _TRY_TO_MATCH_FRAMERATE
+	LDA vsync_count
+	BMI return_vsync
+	ENDIF
+
+	\\ Set our timer for when to decode frame to minimise tearing
+	LDA #LO(TIMER_latch)
+	STA &FE44					; R4=T1 Low-Order Latches (write)
+	LDA #HI(TIMER_latch)
+	STA &FE45					; R5=T1 High-Order Counter
+
+	.return_vsync
+	\\ Exit
+	PLA
+	STA &FC
+	JMP (old_irqv)		; RTI
+}
 
 \ ******************************************************************
 \ *	Set up MODE 7 screen
@@ -902,6 +985,7 @@ ENDIF
 \ *	Event Vector Routines
 \ ******************************************************************
 
+IF 0
 .start_eventv				; new event handler in X,Y
 {
 	\\ Set new Event handler
@@ -939,7 +1023,7 @@ ENDIF
 
 	rts
 }
-
+ENDIF
 
 \ ******************************************************************
 \ *	Debug helpers
