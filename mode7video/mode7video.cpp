@@ -86,6 +86,7 @@ int main(int argc, char **argv)
 	int totalbytes = 0;
 	int maxdeltas = 0;
 	int resetframes = 0;
+	int numpads = 0;
 
 	unsigned char *beeb = (unsigned char *) malloc(MODE7_MAX_SIZE * NUM_FRAMES);
 	unsigned char *ptr = beeb;
@@ -349,18 +350,24 @@ int main(int argc, char **argv)
 				printf("*** RESET *** (%x)\n", ptr - beeb);
 			}
 
-			*ptr++ = 0;
-			*ptr++ = 0xff;
+		//	*ptr++ = 0;
+			*ptr++ = 0x80;			// reset frame
 
 			memcpy(ptr, mode7, FRAME_SIZE);
 			ptr += FRAME_SIZE;
+		}
+		else if (numdeltas == 0)
+		{
+			// Blank frame
+
+			*ptr++ = 0x81;			// blank frame
 		}
 		else
 		{
 			numdeltabytes = numdeltas * 2;
 
-			*ptr++ = LO(numdeltas);
-			*ptr++ = HI(numdeltas);
+		//	*ptr++ = LO(numdeltas);
+		//	*ptr++ = HI(numdeltas);
 
 			int previ = 0;
 
@@ -370,17 +377,47 @@ int main(int argc, char **argv)
 				{
 					unsigned char byte = mode7[i];			//  ^ prevmode7[i] for EOR with prev.
 
-					unsigned short pack = byte & 31;		// remove bits 5 & 6
+				//	unsigned short pack = byte & 31;		// remove bits 5 & 6
 
-					pack |= (byte & 64) >> 1;				// shift bit 6 down
-					pack = (i - previ) + (pack << 10);						// shift whole thing up 10 bits and add offset
+				//	pack |= (byte & 64) >> 1;				// shift bit 6 down
+				//	pack = (i - previ) + (pack << 10);						// shift whole thing up 10 bits and add offset
 
-					*ptr++ = LO(pack);
-					*ptr++ = HI(pack);
+				//	*ptr++ = LO(pack);
+				//	*ptr++ = HI(pack);
+
+					int offset = (i - previ);
+
+				//	if (n == 715)
+				//	{
+				//		printf("[%d] i=%d previ=%d offset=%d byte=%d (%x)\n", n, i, previ, offset, byte, (ptr - beeb));
+				//	}
+
+					if (previ == 0)
+					{
+						*ptr++ = HI(offset);				// offset HI
+						offset -= HI(offset) * 256;			// special case	- THIS CAN RESULT IN VALID ZERO OFFSET
+					}
+
+					while (offset > 255)
+					{
+						printf("** PAD ** (%x) offset=%d\n", (ptr - beeb), offset);
+
+						*ptr++ = 0xff;						// max offset
+						*ptr++ = 0;							// no char
+
+						offset -= 255;
+						numpads++;
+					}
+
+					*ptr++ = offset;
+					*ptr++ = byte;
 
 					previ = i;								// or 0 for offset from screen start
 				}
 			}
+
+			*ptr++ = 0;					// end of frame offset
+			*ptr++ = 0xff;				// end of frame byte
 		}
 
 		{
@@ -460,8 +497,8 @@ int main(int argc, char **argv)
 
 	}
 
-	*ptr++ = 0xff;
-	*ptr++ = 0xff;
+	*ptr++ = 0xff;					// end of stream
+//	*ptr++ = 0xff;
 
 	printf("\ntotal frames = %d\n", NUM_FRAMES);
 	printf("frame size = %d\n", FRAME_SIZE);
@@ -469,6 +506,8 @@ int main(int argc, char **argv)
 	printf("total bytes = %d\n", totalbytes);
 	printf("max deltas = %d\n", maxdeltas);
 	printf("reset frames = %d\n", resetframes);
+	printf("pad deltas = %d\n", numpads);
+	printf("actual data size = %d\n", (ptr-beeb));
 	printf("deltas / frame = %f\n", totaldeltas / (float)NUM_FRAMES);
 	printf("bytes / frame = %f\n", totalbytes / (float)NUM_FRAMES);
 	printf("bytes / second = %f\n", 25.0f * totalbytes / (float)NUM_FRAMES);
