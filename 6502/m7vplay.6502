@@ -859,9 +859,10 @@ ENDIF
 	.no_read_error
 	\\ Indicate our frame rate
 	DEC vsync_count
-	IF _TRY_TO_MATCH_FRAMERATE
+; Video data runs at 25Hz so take two frames off our sync counter
+;	IF _TRY_TO_MATCH_FRAMERATE
 	DEC vsync_count
-	ENDIF
+;	ENDIF
 
 	\\ Remove our work lock
 	DEC decode_lock

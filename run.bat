@@ -1,1 +1,1 @@
-"..\..\bin\B-em\B-em.exe" badappl\disks\badappl.dsd
+run_mode7_disk.bat badappl
