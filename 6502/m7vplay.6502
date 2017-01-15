@@ -517,11 +517,8 @@ ENDIF
 	\\ Get number of deltas in frame (16-bits)
 	JSR get_decrunched_byte
 	BCS return
-	STA num_deltas
 
-	JSR get_decrunched_byte
-	BCS return
-	STA num_deltas+1
+	STA num_deltas				; NOT ACTUALLY NUM DELTAS BUT FRAME TYPE
 
 	\\ Reset our write ptr
 	LDA VID_frame_start			; #LO(VID_frame_addr)
@@ -563,84 +560,56 @@ ENDIF
 .decode_frame_data
 {
 	\\ Check if this is a special frame before we start
-	LDA num_deltas+1
-	CMP #&FF
-	BEQ special_frame
+	LDA num_deltas
+	BMI special_frame
 
 	\\ Regular frame (deltas)
 
-	.loop
-	\\ Check if we're done
-	LDA num_deltas
-	BNE not_zero
-	LDA num_deltas+1
-	BNE not_zero
-
-	\\  Zero deltas left
-	CLC
-	RTS
-
-	.not_zero
-	\\ Get packed 16-bit delta
-	JSR get_decrunched_byte
-	BCS return
-	STA packed_delta
-
-	JSR get_decrunched_byte
-	BCS return
-	STA packed_delta+1
-
-	\\ Decode offset (10 bits)
-	CLC
-	LDA packed_delta
-	ADC writeptr
-	STA writeptr
-
-	LDA packed_delta+1
-; No need to do this with COLOUR
-;	AND #&3						; only need bottom 2 bits
+	\\ This is high byte of first offset
 	ADC writeptr+1
 	STA writeptr+1
 
-	\\ Decode pixels into MODE 7 byte (6 bits)
-	\\ 00X1 1111
-	\\ 0X01 1111
-	\\ 0X11 1111
+	.loop
 
-IF 0	; No need to do this with COLOUR
-	LDA packed_delta+1
-	AND #128					; top bit 7
-	LSR A						; shift down to bit 6
-	STA shifted_bit
-
-	LDA packed_delta+1	
-	LSR A
-	LSR A						; shift down twice
-	ORA #32						; always need 32 for MODE 7
-	ORA shifted_bit				; mask in bit 6
-ELSE
+	\\ Get low byte of offset
 	JSR get_decrunched_byte
 	BCS return
-ENDIF
 
-	\\ Write to screen! (do this without indirect write?)
+	\\ Add it to our write pointer
+	ADC writeptr
+	STA writeptr
+
+	\\ Increment high byte if carry
+	{
+		BCC no_carry
+		INC writeptr+1
+		.no_carry
+	}
+
+	\\ Get our MODE 7 byte
+	JSR get_decrunched_byte
+	BCS return
+
+	\\ End of frame?
+	CMP #&FF
+	BEQ completed
+
+	\\ Ignore if NULL char
+	CMP #0
+	BEQ loop
+
+	\\ Write it to screen!
 	LDY #0
 	STA (writeptr),Y
-
-	\\ Decrement delta count
-	SEC
-	LDA num_deltas
-	SBC #1
-	STA num_deltas
-	LDA num_deltas+1
-	SBC #0
-	STA num_deltas+1
 
 	\\ Next delta
 	JMP loop
 
 	.special_frame
-	LDA num_deltas
+	CMP #&81
+	BEQ completed					; empty frame
+
+	CMP #&80
 	BEQ full_frame					; &FFFF indicates end of stream
 
 	\\ End of stream
@@ -652,6 +621,10 @@ ENDIF
 	JSR decode_entire_frame
 
 	.return
+	RTS
+
+	.completed
+	CLC
 	RTS
 }
 
