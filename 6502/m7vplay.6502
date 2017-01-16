@@ -87,7 +87,7 @@ VID_default_frame_addr = MODE7_base_addr + (VID_default_mode7_ypos * MODE7_char_
 DFS_track_size = (10 * 256)
 
 DISK2_drive_no = 2			; should be 2
-DISK1_first_track = 1
+DISK1_first_track = 4
 DISK1_last_track = 79		; could potentially deduce these from DFS catalog
 DISK2_first_track = 1
 DISK2_last_track = 79		; doesn't actually matter as data stream should indicate end of buffer
@@ -152,6 +152,15 @@ ENDIF
 
 .old_irqv				SKIP 2
 
+
+\ ******************************************************************
+\ *	MUSIC PLAYER
+\ ******************************************************************
+
+INCLUDE "6502\exomiser.h.asm"
+INCLUDE "6502\vgmplayer.h.asm"
+
+
 \ ******************************************************************
 \ *	Start address to be saved
 \ ******************************************************************
@@ -186,13 +195,13 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 	LDA #23: JSR oswrch
 	LDA #1: JSR oswrch
 	LDA #0: JSR oswrch
-	LDA #0: JSR oswrch
-	LDA #0: JSR oswrch
-	LDA #0: JSR oswrch
-	LDA #0: JSR oswrch
-	LDA #0: JSR oswrch
-	LDA #0: JSR oswrch
-	LDA #0: JSR oswrch
+	JSR oswrch
+	JSR oswrch
+	JSR oswrch
+	JSR oswrch
+	JSR oswrch
+	JSR oswrch
+	JSR oswrch
 
 	\\ Set gfx mode
 	JSR teletexel_init
@@ -217,6 +226,13 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 	IF _ENABLE_WALLCLOCK
 	STA clock_vsync
 	ENDIF
+
+	\\ Initialise music
+
+	LDX #LO(music_data)
+	LDY #HI(music_data)
+	JSR vgm_init_stream
+	BMI read_error
 
 	\\ Load our entire stream buffer from first track
 
@@ -284,6 +300,12 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 		CLI
 	}
 
+	\\ Start the music!
+
+	LDX #LO(poll_player)
+	LDY #HI(poll_player)
+	JSR start_eventv
+
 	\\ Top of our loop
 	.next_frame
 
@@ -321,6 +343,10 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 	LDA old_irqv:STA IRQ1V
 	LDA old_irqv+1:STA IRQ1V+1		; set interrupt handler
 	CLI
+
+	\\ Stop the music!
+
+	JSR stop_eventv
 
 	\\ Exit cleanly (we hope)
 	.return
@@ -959,7 +985,9 @@ ENDIF
 \ *	Event Vector Routines
 \ ******************************************************************
 
-IF 0
+.old_eventv
+EQUW 0
+
 .start_eventv				; new event handler in X,Y
 {
 	\\ Set new Event handler
@@ -997,7 +1025,6 @@ IF 0
 
 	rts
 }
-ENDIF
 
 \ ******************************************************************
 \ *	Debug helpers
@@ -1452,6 +1479,22 @@ FOR n,0,25,1
 EQUB HI(n * MODE7_char_width)
 NEXT
 
+
+\ ******************************************************************
+\ *	MUSIC PLAYER
+\ ******************************************************************
+
+INCLUDE "6502\exomiser.asm"
+INCLUDE "6502\vgmplayer.asm"
+
+
+\ ******************************************************************
+\ *	MUSIC DATA
+\ ******************************************************************
+
+.music_data
+INCBIN "bad_music.raw.exo"
+
 \ ******************************************************************
 \ *	End address to be saved
 \ ******************************************************************
@@ -1466,6 +1509,10 @@ NEXT
 .tabl_bi  SKIP 156
 tabl_lo = decrunch_table + 52
 tabl_hi = decrunch_table + 104
+
+.MUS_tabl_bi  SKIP MUS_TABL_SIZE
+MUS_tabl_lo = MUS_tabl_bi + 52
+MUS_tabl_hi = MUS_tabl_bi + 104
 
 ; -------------------------------------------------------------------
 ; end of decruncher
