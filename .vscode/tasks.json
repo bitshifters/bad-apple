@@ -1,0 +1,41 @@
+{
+    "version": "0.1.0",
+    "command": "cmd",
+    "isShellCommand": true,
+    "showOutput": "always",
+    "echoCommand": true,
+    "suppressTaskName": true,
+    "args": [
+        "/C"
+    ],
+    "tasks": [
+        {
+            "taskName": "m7vplay.ssd",
+            "problemMatcher": {
+                "owner": "6502",
+                "fileLocation": [
+                    "relative",
+                    "${workspaceRoot}"
+                ],
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):\\s+(warning|error):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "severity": 3,
+                    "message": 4
+                }
+            },
+            "args": [
+                "make_badappl.bat"
+            ],
+            "isBuildCommand": true
+        },
+        {
+            "taskName": "Run 'm7vplay.ssd' in Emulator",
+            "isTestCommand": true,
+            "args": [
+                "BeebEm.exe badappl/disks/badappl.dsd"
+            ]
+        }
+    ]
+}
