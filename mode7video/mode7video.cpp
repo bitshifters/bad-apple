@@ -40,7 +40,7 @@ using namespace cimg_library;
 
 #define _COLOUR_DEBUG		FALSE
 
-#define _USE_16_BIT_PACK	FALSE
+#define _USE_16_BIT_PACK	TRUE
 
 #if _USE_16_BIT_PACK
 #define BYTES_PER_DELTA		2
@@ -861,7 +861,7 @@ int main(int argc, char **argv)
 			int state = GET_STATE(min_colour, 0, false, MODE7_BLANK);
 
 			// Set this state before frame begins
-			mode7[(y7 * MODE7_WIDTH) + (FRAME_FIRST_COLUMN - 1)] = MODE7_GFX_COLOUR + min_colour;
+			mode7[(y7 * MODE7_WIDTH) + (FRAME_FIRST_COLUMN - 2)] = MODE7_GFX_COLOUR + min_colour;
 
 			// Kick off recursive error calculation with that state
 			int error = get_error_for_remainder_of_line(FRAME_FIRST_COLUMN, y7, min_colour, 0, false, MODE7_BLANK);
