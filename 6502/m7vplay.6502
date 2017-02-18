@@ -42,6 +42,8 @@ _COUNT_DECRUNCHES = FALSE
 _TRY_TO_MATCH_FRAMERATE = FALSE
 _CHECK_LOAD_BUFFER = FALSE
 
+_ENABLE_CMD_LINE_PARAMS = FALSE
+
 \ ******************************************************************
 \ *	Define macros
 \ ******************************************************************
@@ -87,12 +89,12 @@ VID_default_frame_addr = MODE7_base_addr + (VID_default_mode7_ypos * MODE7_char_
 DFS_track_size = (10 * 256)
 
 DISK2_drive_no = 2			; should be 2
-DISK1_first_track = 4
-DISK1_last_track = 79		; could potentially deduce these from DFS catalog
+DISK1_first_track = 6
+DISK1_last_track = 80		; could potentially deduce these from DFS catalog
 DISK2_first_track = 1
-DISK2_last_track = 79		; doesn't actually matter as data stream should indicate end of buffer
+DISK2_last_track = 80		; doesn't actually matter as data stream should indicate end of buffer
 
-STREAM_buffer_size = (4 * DFS_track_size)
+STREAM_buffer_size = (3 * DFS_track_size)
 
 TIMER_latch = ((56 + 128) * 64) - 2				; 56 scanlines for overscan + retrace + 128 scanlines = half way down frame
 
@@ -162,10 +164,31 @@ INCLUDE "6502\vgmplayer.h.asm"
 
 
 \ ******************************************************************
+\ *	STEAL OS MEMORY
+\ ******************************************************************
+
+; -------------------------------------------------------------------
+; this 156 byte table area may be relocated. It may also be clobbered
+; by other data between decrunches.
+; -------------------------------------------------------------------
+decrunch_table = &A00
+;.tabl_bi  SKIP 156
+tabl_bi = decrunch_table
+tabl_lo = decrunch_table + 52
+tabl_hi = decrunch_table + 104
+
+mus_decrunch_table = &B00
+;.MUS_tabl_bi  SKIP MUS_TABL_SIZE
+MUS_tabl_bi = mus_decrunch_table
+MUS_tabl_lo = MUS_tabl_bi + 52
+MUS_tabl_hi = MUS_tabl_bi + 104
+
+
+\ ******************************************************************
 \ *	Start address to be saved
 \ ******************************************************************
 
-ORG &1900	      					; code origin - assume standard BBC Micro
+ORG &1100	      					; code origin - assume standard BBC Micro
 GUARD &7C00							; ensure code size doesn't hit start of screen memory
 
 .start
@@ -183,7 +206,9 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 {
 \\ Determine command line params
 
+IF _ENABLE_CMD_LINE_PARAMS
 	JSR cmd_line_params
+ENDIF
 
 \\ ***** System initialise ***** \\
 
@@ -356,6 +381,7 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 \\ <drive no disk 1> <drive no disk 2> <screen y pos> <frame height>
 \\ Returns number in A but only valid if carry clear
 
+IF _ENABLE_CMD_LINE_PARAMS
 .cmd_line_get_number
 {
 	\\ Skip whitespace
@@ -463,7 +489,7 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 	.return
 	RTS
 }
-
+ENDIF
 
 
 
@@ -1469,6 +1495,7 @@ EQUB 0				; returned error value
 \ *	Look up tables
 \ ******************************************************************
 
+IF _ENABLE_CMD_LINE_PARAMS
 .mode7_char_width_LO
 FOR n,0,25,1
 EQUB LO(n * MODE7_char_width)
@@ -1478,7 +1505,7 @@ NEXT
 FOR n,0,25,1
 EQUB HI(n * MODE7_char_width)
 NEXT
-
+ENDIF
 
 \ ******************************************************************
 \ *	MUSIC PLAYER
@@ -1487,32 +1514,20 @@ NEXT
 INCLUDE "6502\exomiser.asm"
 INCLUDE "6502\vgmplayer.asm"
 
+.code_end
 
 \ ******************************************************************
 \ *	MUSIC DATA
 \ ******************************************************************
 
 .music_data
-INCBIN "bad_music.raw.exo"
+INCBIN "bbcapple-doesthiscompressbetter.bin.exo"
 
 \ ******************************************************************
 \ *	End address to be saved
 \ ******************************************************************
 
 .end
-
-; -------------------------------------------------------------------
-; this 156 byte table area may be relocated. It may also be clobbered
-; by other data between decrunches.
-; -------------------------------------------------------------------
-.decrunch_table
-.tabl_bi  SKIP 156
-tabl_lo = decrunch_table + 52
-tabl_hi = decrunch_table + 104
-
-.MUS_tabl_bi  SKIP MUS_TABL_SIZE
-MUS_tabl_lo = MUS_tabl_bi + 52
-MUS_tabl_hi = MUS_tabl_bi + 104
 
 ; -------------------------------------------------------------------
 ; end of decruncher
@@ -1538,6 +1553,15 @@ ALIGN &100
 .STREAM_buffer_start
 SKIP STREAM_buffer_size
 .STREAM_buffer_end
+
+PRINT "Code size =", code_end-start, " (", ~(code_end-start), ") bytes."
+PRINT "Music size =", end-music_data, " (", ~(end-music_data), ") bytes."
+PRINT "Video decompress buffer size =", EXO_buffer_end-EXO_buffer_start, " (", ~(EXO_buffer_end-EXO_buffer_start), ") bytes."
+PRINT "Streaming buffer size =", STREAM_buffer_end-STREAM_buffer_start, " (", ~(STREAM_buffer_end-STREAM_buffer_start), ") bytes."
+
+PRINT "TOP =", ~*
+PRINT "GUARD = &7C00"
+PRINT "Bytes free =", &7C00-P%
 
 \ ******************************************************************
 \ *	Save the code
