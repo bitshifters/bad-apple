@@ -99,6 +99,103 @@ unsigned char get_graphic_char_from_image(int x7, int y7, int fg, int bg)
 	return graphic_char;
 }
 
+int flushcode(unsigned char curcode, int curcount, unsigned char **p)
+{
+	switch (curcode)
+	{
+	case MODE7_BLANK:
+		if (p)
+		{
+			*(*p)++ = 0 + curcount;
+		//	printf("0x%02x ", curcount);
+		}
+		// write 0+curcount as byte
+		return 1;
+
+	case 127:			// block
+		if (p)
+		{
+			*(*p)++ = 64 + curcount;
+			printf("0x%02x ", 64+curcount);
+		}
+			// write 64+curcount as byte
+		return 1;
+
+	default:
+		break;
+	}
+
+	return 0;
+}
+
+int calc_steve_size(unsigned char *screen, unsigned char blank, unsigned char **ptrtoptr)
+{
+	int numbytes = 0;
+
+	for (int y7 = 0; y7 < FRAME_HEIGHT; y7++)
+	{
+		// Steve encode
+
+		int x7 = FRAME_FIRST_COLUMN;
+		unsigned char curcode = 0;
+		int curcount = 0;
+
+		while (x7 < MODE7_WIDTH)
+		{
+			unsigned char curchar = screen[y7*MODE7_WIDTH + x7];
+
+			if (curchar == blank)
+			{
+				if (curcode == MODE7_BLANK)
+				{
+					curcount++;
+				}
+				else
+				{
+					numbytes += flushcode(curcode, curcount, ptrtoptr);
+					curcode = MODE7_BLANK;
+					curcount = 1;
+				}
+			}
+			else if (curchar == 127)
+			{
+				if (curcode == 127)
+				{
+					curcount++;
+				}
+				else
+				{
+					numbytes += flushcode(curcode, curcount, ptrtoptr);
+					curcode = 127;
+					curcount = 1;
+				}
+			}
+			else
+			{
+				numbytes += flushcode(curcode, curcount, ptrtoptr);
+				if (ptrtoptr)
+				{
+					*(*ptrtoptr)++ = curchar | 128;
+				//	printf("0x%02x ", curchar | 128);
+				}
+				numbytes += 1;			// graphic char
+				curcode = curcount = 0;
+			}
+
+			x7++;
+		}
+
+		numbytes += flushcode(curcode, curcount, ptrtoptr);
+	}
+
+	if (ptrtoptr)
+	{
+	//	printf("\n");
+	}
+
+	return numbytes;
+}
+
 int main(int argc, char **argv)
 {
 	cimg_usage("MODE 7 video convertor.\n\nUsage : mode7video [options]");
@@ -124,6 +221,9 @@ int main(int argc, char **argv)
 	int maxdeltas = 0;
 	int resetframes = 0;
 	int numpads = 0;
+	int totalsteve = 0;
+	int totalsteved = 0;
+	int totalmin = 0;
 
 	unsigned char *beeb = (unsigned char *) malloc(MODE7_MAX_SIZE * NUM_FRAMES);
 	unsigned char *ptr = beeb;
@@ -230,8 +330,6 @@ int main(int argc, char **argv)
 		// How many deltas?
 		int numdeltas = 0;
 		int numdeltabytes = 0;
-		int numliterals = 0;
-		int numlitbytes = 0;
 
 		for (int i = 0; i < FRAME_SIZE; i++)
 		{
@@ -250,96 +348,131 @@ int main(int argc, char **argv)
 		totaldeltas += numdeltas;
 		if (numdeltas > maxdeltas) maxdeltas = numdeltas;
 		delta_counts[n] = numdeltas;
+		numdeltabytes = numdeltas * BYTES_PER_DELTA;
 
-		if (numdeltas > FRAME_SIZE/BYTES_PER_DELTA)
+		int stevebytes = calc_steve_size(mode7, MODE7_BLANK, NULL);
+		int stevedbytes = INT_MAX;// calc_steve_size(delta, 0, NULL);
+		int minsteve = stevebytes < stevedbytes ? stevebytes : stevedbytes;
+
+		if (numdeltabytes < minsteve)
 		{
-			numdeltabytes = FRAME_SIZE;
-			resetframes++;
-
-			if (verbose)
+			if (numdeltas == 0)
 			{
-				printf("*** RESET *** (%x)\n", ptr - beeb);
+				// Blank frame
+				*ptr++ = 0;
 			}
+			else
+			{
+				// Delta frame
 
-		//	*ptr++ = 0;
-			*ptr++ = 0x80;			// reset frame
+				if (numdeltas > FRAME_SIZE / BYTES_PER_DELTA)
+				{
+					printf("*** RESET *** (%x)\n", ptr - beeb);
+				}
 
-			memcpy(ptr, mode7, FRAME_SIZE);
-			ptr += FRAME_SIZE;
-		}
-		else if (numdeltas == 0)
-		{
-			// Blank frame
+				if (numdeltas > 0xFC)
+				{
+					printf("*** OVERFLOW *** (%x)\n", ptr - beeb);
+				}
 
-			*ptr++ = 0x81;			// blank frame
+#if 0
+				*ptr++ = 1;
+
+				int previ = 0;
+
+				for (int i = 0; i < FRAME_SIZE; i++)
+				{
+					if (delta[i] != 0)
+					{
+						unsigned char byte = mode7[i];			//  ^ prevmode7[i] for EOR with prev.
+
+						int offset = (i - previ);
+
+						if (previ == 0)
+						{
+							*ptr++ = HI(offset);				// offset HI
+							offset -= HI(offset) * 256;			// special case	- THIS CAN RESULT IN VALID ZERO OFFSET
+						}
+
+						while (offset > 255)
+						{
+							*ptr++ = 0xff;						// max offset
+							*ptr++ = 0;							// no char
+
+							offset -= 255;
+							numpads++;
+						}
+
+						*ptr++ = offset;
+						*ptr++ = byte;
+
+						previ = i;								// or 0 for offset from screen start
+					}
+				}
+
+				*ptr++ = 0;					// end of frame offset
+				*ptr++ = 0xff;				// end of frame byte		do we need this?
+#else
+				*ptr++ = LO(numdeltas);
+
+				int previ = 0;
+
+				for (int i = 0; i < FRAME_SIZE; i++)
+				{
+					if (delta[i] != 0)
+					{
+						unsigned char byte = mode7[i];			//  ^ prevmode7[i] for EOR with prev.
+
+						int offset = (i - previ);
+						int data = (byte & 31) | ((byte & 64) >> 1);		// mask out bit 5, shift down bit 6
+
+						unsigned short pack = (data << 10) | offset;
+
+						*ptr++ = LO(pack);
+						*ptr++ = HI(pack);
+
+						previ = i;								// or 0 for offset from screen start
+					}
+				}
+#endif
+			}
 		}
 		else
 		{
-			numdeltabytes = numdeltas * BYTES_PER_DELTA;
+			// Steve frame
 
-		//	*ptr++ = LO(numdeltas);
-		//	*ptr++ = HI(numdeltas);
-
-			int previ = 0;
-
-			for (int i = 0; i < FRAME_SIZE; i++)
+			if (stevebytes < stevedbytes)
 			{
-				if (delta[i] != 0)
-				{
-					unsigned char byte = mode7[i];			//  ^ prevmode7[i] for EOR with prev.
-				//	unsigned short pack = byte & 31;		// remove bits 5 & 6
+				// Full steve
+				*ptr++ = 0xFE;
 
-				//	pack |= (byte & 64) >> 1;				// shift bit 6 down
-				//	pack = (i - previ) + (pack << 10);						// shift whole thing up 10 bits and add offset
+				calc_steve_size(mode7, MODE7_BLANK, &ptr);
+			}
+			else
+			{
+				// Delta steve
+				*ptr++ = 0XFD;
 
-				//	*ptr++ = LO(pack);
-				//	*ptr++ = HI(pack);
-
-					int offset = (i - previ);
-
-				//	if (n == 715)
-				//	{
-				//		printf("[%d] i=%d previ=%d offset=%d byte=%d (%x)\n", n, i, previ, offset, byte, (ptr - beeb));
-				//	}
-
-					if (previ == 0)
-					{
-						*ptr++ = HI(offset);				// offset HI
-						offset -= HI(offset) * 256;			// special case	- THIS CAN RESULT IN VALID ZERO OFFSET
-					}
-
-					while (offset > 255)
-					{
-						printf("** PAD ** (%x) offset=%d\n", (ptr - beeb), offset);
-
-						*ptr++ = 0xff;						// max offset
-						*ptr++ = 0;							// no char
-
-						offset -= 255;
-						numpads++;
-					}
-
-					*ptr++ = offset;
-					*ptr++ = byte;
-
-					previ = i;								// or 0 for offset from screen start
-				}
+				calc_steve_size(delta, 0, &ptr);
 			}
 
-			*ptr++ = 0;					// end of frame offset
-			*ptr++ = 0xff;				// end of frame byte
 		}
+
 
 		if (verbose)
 		{
-			printf("Frame: %d  numdeltas=%d (%d)\n", n, numdeltas, numdeltabytes);
+			printf("Frame: %d  numdeltas=%d (%d) stevebytes=%d stevedbytes=%d\n", n, numdeltas, numdeltabytes, stevebytes, stevedbytes);
 		}
 		else
 		{
 			printf("\rFrame: %d/%d", n, NUM_FRAMES);
 		}
 
+		totalmin += 2 + (numdeltabytes < minsteve ? numdeltabytes : minsteve);
+
 		totalbytes += 2 + numdeltabytes;
+		totalsteve += stevebytes;
+		totalsteved += stevedbytes;
 
 		if (save)
 		{
@@ -393,6 +526,9 @@ int main(int argc, char **argv)
 	printf("bytes / frame = %f\n", totalbytes / (float)total_frames);
 	printf("bytes / second = %f\n", 25.0f * totalbytes / (float)total_frames);
 	printf("beeb size = %d bytes\n", ptr - beeb);
+	printf("steve byte size = %d\n", totalsteve);
+	printf("steve delta byte size = %d\n", totalsteved);
+	printf("theoretical minimum = %d", totalmin);
 
 	sprintf(filename, "%s\\%s_beeb.bin", DIRECTORY, FILENAME);
 	file = fopen((const char*)filename, "wb");

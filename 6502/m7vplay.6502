@@ -134,6 +134,7 @@ GUARD &9F
 .decode_lock			SKIP 1
 .track_no				SKIP 1
 .load_to_HI				SKIP 1
+.xpos					SKIP 1
 
 IF _ENABLE_WALLCLOCK
 .clock_vsync			SKIP 1
@@ -570,7 +571,7 @@ ENDIF
 	JSR get_decrunched_byte
 	BCS return
 
-	STA num_deltas				; NOT ACTUALLY NUM DELTAS BUT FRAME TYPE
+	STA num_deltas				; NOT ACTUALLY NUM DELTAS + FRAME TYPE
 
 	\\ Reset our write ptr
 	LDA VID_frame_start			; #LO(VID_frame_addr)
@@ -584,28 +585,72 @@ ENDIF
 
 .decode_entire_frame
 {
-	\\ Write entire frame (<=1000 bytes)
+	LDA #19			; num rows
+	STA num_deltas
+
+	.rows
+	LDY #2
+
 	.loop
+	STY xpos
+
 	JSR get_decrunched_byte
 	BCS return				; read error
-	LDY #0					; this was missing?!
-	STA (writeptr),Y
 
-	INC writeptr
-	BNE no_carry
+	CMP #128
+	BCS write_one_char
+
+	CMP #64
+	BCS write_many_blocks
+
+	\\ write many spaces
+	TAX
+	LDA #32
+	LDY xpos
+	.space_loop
+	STA (writeptr), Y
+	INY
+	DEX
+	BNE space_loop
+	JMP check_end_of_row
+
+	.write_many_blocks
+	AND #&BF			; remove 64
+	TAX
+	LDA #127
+	LDY xpos
+	.block_loop
+	STA (writeptr), Y
+	INY
+	DEX
+	BNE block_loop
+	JMP check_end_of_row
+
+	.write_one_char
+	LDY xpos
+	STA (writeptr),Y
+	INY
+
+	.check_end_of_row
+	CPY #MODE7_char_width
+	BCC loop
+
+	DEC num_deltas
+	BEQ return
+
+	\\ Next row
+	CLC
+	LDA writeptr
+	ADC #MODE7_char_width
+	STA writeptr
+	BCC no_carry
 	INC writeptr+1
 	.no_carry
 
-	LDA writeptr
-	CMP VID_frame_end		; #LO(VID_frame_addr + VID_frame_size)
-	BNE loop
-	LDA writeptr+1
-	CMP VID_frame_end+1		; #HI(VID_frame_addr + VID_frame_size)
-	BNE loop
-
-	CLC						; no read error
+	JMP rows
 
 	.return
+	CLC						; no read error
 	RTS
 }
 
@@ -613,70 +658,75 @@ ENDIF
 {
 	\\ Check if this is a special frame before we start
 	LDA num_deltas
-	BMI special_frame
+	BEQ completed			; empty frame
+
+	CMP #&FE
+	BCS special_frame
 
 	\\ Regular frame (deltas)
-
-	\\ This is high byte of first offset
-	ADC writeptr+1
-	STA writeptr+1
 
 	.loop
 
 	\\ Get low byte of offset
 	JSR get_decrunched_byte
 	BCS return
+	STA packed_delta
 
-	\\ Add it to our write pointer
+	JSR get_decrunched_byte
+	BCS return
+	STA packed_delta+1
+	
+	\\ Decode offset (10 bits)
+	CLC
+	LDA packed_delta
 	ADC writeptr
 	STA writeptr
 
-	\\ Increment high byte if carry
-	{
-		BCC no_carry
-		INC writeptr+1
-		.no_carry
-	}
+	LDA packed_delta+1
+	AND #&3						; only need bottom 2 bits
+	ADC writeptr+1
+	STA writeptr+1
 
-	\\ Get our MODE 7 byte
-	JSR get_decrunched_byte
-	BCS return
+	\\ Decode pixels into MODE 7 byte (6 bits)
+	\\ 00X1 1111
+	\\ 0X01 1111
+	\\ 0X11 1111
 
-	\\ End of frame?
-	CMP #&FF
-	BEQ completed
+	LDA packed_delta+1
+	AND #128					; top bit 7
+	LSR A						; shift down to bit 6
+	STA shifted_bit
 
-	\\ Ignore if NULL char
-	CMP #0
-	BEQ loop
+	LDA packed_delta+1	
+	LSR A
+	LSR A						; shift down twice
+	ORA #32						; always need 32 for MODE 7
+	ORA shifted_bit				; mask in bit 6
 
-	\\ Write it to screen!
+	\\ Write to screen! (do this without indirect write?)
 	LDY #0
 	STA (writeptr),Y
 
 	\\ Next delta
-	JMP loop
-
-	.special_frame
-	CMP #&81
-	BEQ completed					; empty frame
-
-	CMP #&80
-	BEQ full_frame					; &FFFF indicates end of stream
-
-	\\ End of stream
-	INC error_flag
-	BNE return
-
-	\\ Write entire frame (<=1000 bytes)
-	.full_frame
-	JSR decode_entire_frame
-
-	.return
-	RTS
+	DEC num_deltas
+	BNE loop
 
 	.completed
 	CLC
+	RTS
+
+	.special_frame
+	CMP #&FE
+	BNE end_of_stream
+	
+	\\ Decode entire frame using Steve's codec
+	JMP decode_entire_frame
+
+	\\ End of stream
+	.end_of_stream
+	INC error_flag
+
+	.return
 	RTS
 }
 
