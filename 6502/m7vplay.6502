@@ -94,7 +94,7 @@ VID_default_frame_addr = MODE7_base_addr + (VID_default_mode7_ypos * MODE7_char_
 DFS_track_size = (10 * 256)
 
 DISK2_drive_no = 2			; should be 2
-DISK1_first_track = 6
+DISK1_first_track = 6		; the track at which the video file is located on side 0; all tracks prior to this are reserved for code
 DISK1_last_track = 80		; could potentially deduce these from DFS catalog
 DISK2_first_track = 1
 DISK2_last_track = 80		; doesn't actually matter as data stream should indicate end of buffer
@@ -1540,7 +1540,7 @@ ENDIF
 \ ******************************************************************
 \ *	End address to be saved
 \ ******************************************************************
-
+ALIGN 256	; pad to nearest page to ensure exe fills a complete sector
 .end
 
 ; -------------------------------------------------------------------
@@ -1582,10 +1582,15 @@ PRINT "Streaming buffer size =", STREAM_buffer_end-STREAM_buffer_start, " (", ~(
 
 PRINT "TOP =", ~*
 PRINT "GUARD = &7C00"
-PRINT "Bytes free =", &7C00-P%
+PRINT "RAM Bytes free =", &7C00-P%
 
 \ ******************************************************************
 \ *	Save the code
 \ ******************************************************************
 
-SAVE "M7VPLAY", start, end
+SAVE "!boot", start, end
+EXE_SIZE = end-start
+PADDING_SIZE = ((DISK1_first_track*DFS_track_size)-512)-EXE_SIZE
+PRINT "EXE Size is ", ~EXE_SIZE, "bytes"
+PRINT "Padding to track", DISK1_first_track, "is ", ~PADDING_SIZE, "bytes"
+SAVE "btshftr", start, start+PADDING_SIZE, 0, 0

@@ -1,11 +1,16 @@
 REM Usage: make_mode7_disks <short name/dir>
 @echo off
-del "%1\disks\%1_disk1.ssd"
+
+rem disk1 now created by beebasm
+rem del "%1\disks\%1_disk1.ssd"
+rem bin\bbcim -a "%1\disks\%1_disk1.ssd" "m7vplay"
+
 del "%1\disks\%1_disk2.ssd"
-bin\bbcim -a "%1\disks\%1_disk1.ssd" "m7vplay"
+
 CD files
-..\bin\bbcim -a "..\%1\disks\%1_disk1.ssd" "Boot"
-..\bin\bbcim -a "..\%1\disks\%1_disk1.ssd" "Dummy2"
+rem boot & track padding now compiled into demo 
+rem ..\bin\bbcim -a "..\%1\disks\%1_disk1.ssd" "Boot"
+rem ..\bin\bbcim -a "..\%1\disks\%1_disk1.ssd" "Dummy2"
 ..\bin\bbcim -a "..\%1\disks\%1_disk2.ssd" "Dummy8"
 CD "..\%1\files"
 ..\..\bin\bbcim -a "..\disks\%1_disk1.ssd" "%1_beeb_00"
