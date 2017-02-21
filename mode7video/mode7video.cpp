@@ -116,7 +116,7 @@ int flushcode(unsigned char curcode, int curcount, unsigned char **p)
 		if (p)
 		{
 			*(*p)++ = 64 + curcount;
-			printf("0x%02x ", 64+curcount);
+		//	printf("0x%02x ", 64+curcount);
 		}
 			// write 64+curcount as byte
 		return 1;
@@ -508,6 +508,7 @@ int main(int argc, char **argv)
 
 		memcpy(prevmode7, mode7, MODE7_MAX_SIZE);
 
+		//		if (n % 10 == 0) n++;
 	}
 
 	*ptr++ = 0xff;					// end of stream

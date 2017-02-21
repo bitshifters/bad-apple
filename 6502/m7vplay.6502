@@ -29,6 +29,7 @@ INKEY_q = 16
 SEI_OP = $78
 CLI_OP = $58
 NOP_OP = $ea
+JMP_OP = &4C
 
 
 \ ******************************************************************
@@ -43,6 +44,8 @@ _TRY_TO_MATCH_FRAMERATE = FALSE
 _CHECK_LOAD_BUFFER = FALSE
 
 _ENABLE_CMD_LINE_PARAMS = FALSE
+
+_MUSIC_START_DELAY = 20
 
 \ ******************************************************************
 \ *	Define macros
@@ -81,8 +84,8 @@ MODE7_separated = 154
 \ *	Define app constants
 \ ******************************************************************
 
-VID_default_mode7_ypos = 3
-VID_default_frame_height = 19		; 14 = Grav
+VID_default_mode7_ypos = 2
+VID_default_frame_height = 22		; 19
 VID_default_frame_size = (MODE7_char_width * VID_default_frame_height)
 VID_default_frame_addr = MODE7_base_addr + (VID_default_mode7_ypos * MODE7_char_width)
 
@@ -96,7 +99,9 @@ DISK2_last_track = 80		; doesn't actually matter as data stream should indicate 
 
 STREAM_buffer_size = (4 * DFS_track_size)
 
-TIMER_latch = 20000			; 20ms = 1x vsync :)
+TIMER_latch = 20000-2		; 20ms = 1x vsync :)
+
+FX_frame = 336
 
 \ ******************************************************************
 \ *	Define fast (zero page) runtime variables
@@ -232,6 +237,8 @@ ENDIF
 	JSR oswrch
 
 	\\ Set gfx mode
+	LDX #0
+	LDA #MODE7_graphic_black+7
 	JSR teletexel_init
 
 	\\ Zero our variables
@@ -311,6 +318,9 @@ ENDIF
 	ADC VID_frame_start+1
 	STA VID_frame_end+1
 
+	LDA #19
+	JSR osbyte
+
 	\\ Enable irq
 	{
 		SEI
@@ -320,32 +330,31 @@ ENDIF
 		LDA #LO(irq_handler):STA IRQ1V
 		LDA #HI(irq_handler):STA IRQ1V+1		; set interrupt handler
 
-	;	LDA #0						; A=00000000
-	;	STA &FE4B					; R11=Auxillary Control Register (timer 1 one shot mode)
 		LDA #64						; A=00000000
 		STA &FE4B					; R11=Auxillary Control Register (timer 1 latched mode)
 
 		LDA #&C0					; A=11000000
 		STA &FE4E					; R14=Interrupt Enable (enable timer 1 interrupt)
 
-		LDA #LO(TIMER_latch)
+		LDA #LO(TIMER_latch/2)
 		STA &FE44					; R4=T1 Low-Order Latches (write)
-		LDA #HI(TIMER_latch)
+		LDA #HI(TIMER_latch/2)
 		STA &FE45					; R5=T1 High-Order Counter
 		
 		LDA #LO(TIMER_latch)
 		STA &FE46
 		LDA #HI(TIMER_latch)
 		STA &FE47
-	
 		CLI
 	}
 
 	\\ Start the music!
 
+	IF _MUSIC_START_DELAY = 0
 	LDX #LO(poll_player)
 	LDY #HI(poll_player)
 	JSR start_eventv
+	ENDIF
 
 	\\ Top of our loop
 	.next_frame
@@ -353,6 +362,27 @@ ENDIF
 	\\ Wait vsync
 	LDA #19
 	JSR osbyte
+
+	IF _MUSIC_START_DELAY <> 0
+	{
+		.music_start_code
+		LDA frame_no
+		CMP #_MUSIC_START_DELAY
+		BNE not_ready
+
+		LDX #LO(poll_player)
+		LDY #HI(poll_player)
+		JSR start_eventv
+
+		LDA #JMP_OP			; JMP
+		STA music_start_code
+		LDA #LO(not_ready)
+		STA music_start_code+1
+		LDA #HI(not_ready)
+		STA music_start_code+2
+		.not_ready
+	}
+	ENDIF
 
 ;	LDA vsync_count
 ;	.wait_for_vsync
@@ -391,6 +421,9 @@ ENDIF
 	CLI
 
 	\\ Stop the music!
+	.wait_for_music
+	LDA vgm_player_ended
+	BEQ wait_for_music	
 
 	JSR stop_eventv
 
@@ -605,7 +638,7 @@ ENDIF
 
 .decode_entire_frame
 {
-	LDA #19			; num rows
+	LDA #VID_default_frame_height			; num rows
 	STA num_deltas
 
 	.rows
@@ -895,6 +928,29 @@ ENDIF
 		.no_carry
 	}
 
+	\\ Frame FX
+	{
+		.test_fx_frame
+		LDA frame_no+1
+		CMP #HI(FX_frame)
+		BNE no_fx
+		LDA frame_no
+		CMP #LO(FX_frame)
+		BNE no_fx
+		
+		LDX #1
+		LDA #MODE7_separated
+		JSR teletexel_init
+
+		LDA #JMP_OP			; JMP
+		STA test_fx_frame
+		LDA #LO(no_fx)
+		STA test_fx_frame+1
+		LDA #HI(no_fx)
+		STA test_fx_frame+2
+		.no_fx
+	}
+
 	\\ Store registers in case of interupts
 	TXA:PHA:TYA:PHA
 
@@ -939,35 +995,13 @@ ENDIF
 \ *	Set up MODE 7 screen
 \ ******************************************************************
 
+; X=column, A=character code
 .teletexel_init						; set blank screen
 {
-	\\ Reset our write ptr
-	LDA #LO(MODE7_base_addr)
-	STA writeptr
-	LDA #HI(MODE7_base_addr)
-	STA writeptr+1
-
-	LDY #0
-	.loop
-	LDA #MODE7_graphic_black + 7	; white
-	STA (writeptr),Y
-
-	\\ 2nd column here
-
-	CLC
-	LDA writeptr
-	ADC #MODE7_char_width
-	STA writeptr
-	LDA writeptr+1
-	ADC #0
-	STA writeptr+1
-
-	LDA writeptr
-	CMP #LO(MODE7_base_addr + MODE7_screen_size)
-	BNE loop
-	LDA writeptr+1
-	CMP #HI(MODE7_base_addr + MODE7_screen_size)
-	BNE loop
+	FOR n,0,VID_default_frame_height-1
+	addr=VID_default_frame_addr + n*MODE7_char_width
+	STA addr, X
+	NEXT
 
 	.return
 	RTS

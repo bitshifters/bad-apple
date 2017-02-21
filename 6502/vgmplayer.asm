@@ -262,7 +262,7 @@ EQUB &01, &02, &04, &08, &10, &20, &40, &80
 
 	\\ Get next byte from the stream
 	jsr MUS_get_decrunched_byte
-	bcs _player_end
+	bcs wait_20_ms
 
 	cmp #&ff
 	beq _player_end
