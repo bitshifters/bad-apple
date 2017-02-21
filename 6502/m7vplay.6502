@@ -1527,14 +1527,14 @@ INCLUDE "6502\vgmplayer.asm"
 IF _MUS_BUFFER_2K
 	; 'Final' version of music compressed using:
 	;  exomizer.exe raw -c -m 2048 <file.raw> -o <file.exo>
-	INCBIN "bbcapple.bin.exo"
+	INCBIN "data/bbcapple.bin.exo"
 	; gotta pad this out to same size as music below so that track alignment is good
 	; TODO: a better fix is to sort the disk image packing
 	SKIP (music_data+12095)-*
 ELSE
 	; 'Party' version of music compressed using:
 	;  exomizer.exe raw -c -m 1024 <file.raw> -o <file.exo>
-	INCBIN "bbcapple-doesthiscompressbetter.bin.exo"
+	INCBIN "data/bbcapple-doesthiscompressbetter.bin.exo"
 ENDIF
 
 \ ******************************************************************
