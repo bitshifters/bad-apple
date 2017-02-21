@@ -97,7 +97,7 @@ DISK1_last_track = 80		; could potentially deduce these from DFS catalog
 DISK2_first_track = 1
 DISK2_last_track = 80		; doesn't actually matter as data stream should indicate end of buffer
 
-STREAM_buffer_size = (4 * DFS_track_size)
+STREAM_buffer_size = (3 * DFS_track_size)
 
 TIMER_latch = 20000-2		; 20ms = 1x vsync :)
 
