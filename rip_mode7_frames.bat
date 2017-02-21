@@ -6,4 +6,4 @@ md %2\bin
 md %2\delta
 md %2\files
 md %2\disks
-bin\ffmpeg.exe -i %1 -r 25 -s %3 %2\frames\%2-%%d.png
+bin\ffmpeg.exe -i %1 -r 22.64 -s %3 %2\frames\%2-%%d.png

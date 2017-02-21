@@ -6,87 +6,224 @@
 
 using namespace cimg_library;
 
-#define MODE7_COL0		151
-#define MODE7_COL1		(sep ? 154 : 32)
-#define MODE7_BLANK		32
-#define MODE7_WIDTH		40
-#define MODE7_HEIGHT	25
-#define MODE7_MAX_SIZE	(MODE7_WIDTH * MODE7_HEIGHT)
+#define MODE7_COL0			151
+#define MODE7_COL1			(sep ? 154 : 32)
+#define MODE7_BLANK			32
+#define MODE7_WIDTH			40
+#define MODE7_HEIGHT		25
+#define MODE7_MAX_SIZE		(MODE7_WIDTH * MODE7_HEIGHT)
 
-#define JPG_W			src._width		// w				// 76
-#define JPG_H			src._height		// h				// 57 = 4:3  // 42 = 16:9
-#define FRAME_WIDTH		(JPG_W/2)
-#define FRAME_HEIGHT	(JPG_H/3)
-#define NUM_FRAMES		frames			// 5367		// 5478
-#define FRAME_SIZE		(MODE7_WIDTH * FRAME_HEIGHT)
+#define MODE7_BLACK_BG		156
+#define MODE7_NEW_BG		157
+#define MODE7_HOLD_GFX		158
+#define MODE7_RELEASE_GFX	159
+#define MODE7_GFX_COLOUR	144
 
-#define FILENAME		shortname		// "bad"	// "grav"
-#define DIRECTORY		shortname		// "bad"	// "grav"
+#define JPG_W				src._width		// w				// 76
+#define JPG_H				src._height		// h				// 57 = 4:3  // 42 = 16:9
+#define FRAME_WIDTH			(JPG_W/2)
+#define FRAME_HEIGHT		(JPG_H/3)
+#define NUM_FRAMES			frames			// 5367		// 5478
+#define FRAME_SIZE			(MODE7_WIDTH * FRAME_HEIGHT)
 
-#define _ZERO_FRAME_PRESET TRUE		// whether our zero frame is already setup for MODE 7
+#define FRAME_FIRST_COLUMN	(MODE7_WIDTH - FRAME_WIDTH)
 
-#define CLAMP(a,low,high)		((a) < (low) ? (low) : ((a) > (high) ? (high) : (a)))
-#define THRESHOLD(a,t)			((a) >= (t) ? 255 : 0)
-#define LO(a)					((a) % 256)
-#define HI(a)					((a) / 256)
+#define FILENAME			shortname
+#define DIRECTORY			shortname
+
+#define _ZERO_FRAME_PRESET	TRUE		// whether our zero frame is already setup for MODE 7
+
+#define CLAMP(a,low,high)	((a) < (low) ? (low) : ((a) > (high) ? (high) : (a)))
+#define THRESHOLD(a,t)		((a) >= (t) ? 255 : 0)
+#define LO(a)				((a) % 256)
+#define HI(a)				((a) / 256)
+
+#define BYTES_PER_DELTA		2
+
+static CImg<unsigned char> src;
+static unsigned char prevmode7[MODE7_MAX_SIZE];
+static unsigned char delta[MODE7_MAX_SIZE];
+static unsigned char mode7[MODE7_MAX_SIZE];
+
+
+int get_colour_from_rgb(unsigned char r, unsigned char g, unsigned char b)
+{
+	return (r ? 1 : 0) + (g ? 2 : 0) + (b ? 4 : 0);
+}
+
+#define GET_RED_FROM_COLOUR(c)		(c & 1 ? 255:0)
+#define GET_GREEN_FROM_COLOUR(c)	(c & 2 ? 255:0)
+#define GET_BLUE_FROM_COLOUR(c)		(c & 4 ? 255:0)
 
 unsigned char pixel_to_grey(int mode, unsigned char r, unsigned char g, unsigned char b)
 {
 	switch (mode)
 	{
-	case 0:
+	case 1:
 		return r;
 
-	case 1:
+	case 2:
 		return g;
 
-	case 2:
+	case 3:
 		return b;
 
 	case 4:
+		return (unsigned char)((r + g + b) / 3);
+
+	case 5:
 		return (unsigned char)(0.2126f * r + 0.7152f * g + 0.0722f * b);
 
 	default:
-		return (unsigned char)((r + g + b) / 3);
+		return 0;
 	}
+}
+
+unsigned char get_graphic_char_from_image(int x7, int y7, int fg, int bg)
+{
+	int x = (x7 - FRAME_FIRST_COLUMN) * 2;
+	int y = y7 * 3;
+	unsigned char graphic_char;
+
+		// We have some pixels in this cell
+		// Calculate graphic character - if pixel == bg colour then off else on
+
+		graphic_char = 32 +																				// bit 5 always set!
+			+(get_colour_from_rgb(src(x, y, 0), src(x, y, 1), src(x, y, 2)) == bg ? 0 : 1)						// (x,y) = bit 0
+			+ (get_colour_from_rgb(src(x + 1, y, 0), src(x + 1, y, 1), src(x + 1, y, 2)) == bg ? 0 : 2)					// (x+1,y) = bit 1
+			+ (get_colour_from_rgb(src(x, y + 1, 0), src(x, y + 1, 1), src(x, y + 1, 2)) == bg ? 0 : 4)					// (x,y+1) = bit 2
+			+ (get_colour_from_rgb(src(x + 1, y + 1, 0), src(x + 1, y + 1, 1), src(x + 1, y + 1, 2)) == bg ? 0 : 8)			// (x+1,y+1) = bit 3
+			+ (get_colour_from_rgb(src(x, y + 2, 0), src(x, y + 2, 1), src(x, y + 2, 2)) == bg ? 0 : 16)				// (x,y+2) = bit 4
+			+ (get_colour_from_rgb(src(x + 1, y + 2, 0), src(x + 1, y + 2, 1), src(x + 1, y + 2, 2)) == bg ? 0 : 64);			// (x+1,y+2) = bit 6
+
+	return graphic_char;
+}
+
+int flushcode(unsigned char curcode, int curcount, unsigned char **p)
+{
+	switch (curcode)
+	{
+	case MODE7_BLANK:
+		if (p)
+		{
+			*(*p)++ = 0 + curcount;
+		//	printf("0x%02x ", curcount);
+		}
+		// write 0+curcount as byte
+		return 1;
+
+	case 127:			// block
+		if (p)
+		{
+			*(*p)++ = 64 + curcount;
+		//	printf("0x%02x ", 64+curcount);
+		}
+			// write 64+curcount as byte
+		return 1;
+
+	default:
+		break;
+	}
+
+	return 0;
+}
+
+int calc_steve_size(unsigned char *screen, unsigned char blank, unsigned char **ptrtoptr)
+{
+	int numbytes = 0;
+
+	for (int y7 = 0; y7 < FRAME_HEIGHT; y7++)
+	{
+		// Steve encode
+
+		int x7 = FRAME_FIRST_COLUMN;
+		unsigned char curcode = 0;
+		int curcount = 0;
+
+		while (x7 < MODE7_WIDTH)
+		{
+			unsigned char curchar = screen[y7*MODE7_WIDTH + x7];
+
+			if (curchar == blank)
+			{
+				if (curcode == MODE7_BLANK)
+				{
+					curcount++;
+				}
+				else
+				{
+					numbytes += flushcode(curcode, curcount, ptrtoptr);
+					curcode = MODE7_BLANK;
+					curcount = 1;
+				}
+			}
+			else if (curchar == 127)
+			{
+				if (curcode == 127)
+				{
+					curcount++;
+				}
+				else
+				{
+					numbytes += flushcode(curcode, curcount, ptrtoptr);
+					curcode = 127;
+					curcount = 1;
+				}
+			}
+			else
+			{
+				numbytes += flushcode(curcode, curcount, ptrtoptr);
+				if (ptrtoptr)
+				{
+					*(*ptrtoptr)++ = curchar | 128;
+				//	printf("0x%02x ", curchar | 128);
+				}
+				numbytes += 1;			// graphic char
+				curcode = curcount = 0;
+			}
+
+			x7++;
+		}
+
+		numbytes += flushcode(curcode, curcount, ptrtoptr);
+	}
+
+	if (ptrtoptr)
+	{
+	//	printf("\n");
+	}
+
+	return numbytes;
 }
 
 int main(int argc, char **argv)
 {
 	cimg_usage("MODE 7 video convertor.\n\nUsage : mode7video [options]");
-//	const char *const geom = cimg_option("-g", "76x57", "Input size (ignored for now)");
 	const int frames = cimg_option("-n", 0, "Last frame number");
 	const int start = cimg_option("-s", 1, "Start frame number");
 	const char *const shortname = cimg_option("-i", (char*)0, "Input (directory / short name)");
 	const char *const ext = cimg_option("-e", (char*)"png", "Image format file extension");
-	const int gmode = cimg_option("-g", 0, "Colour to greyscale conversion (0=red only, 1=green only, 2=blue only, 3=simple average, 4=luminence preserving");
+	const int gmode = cimg_option("-g", 0, "Colour to greyscale conversion (0=none, 1=red only, 2=green only, 3=blue only, 4=simple average, 5=luminence preserving");
 	const int thresh = cimg_option("-t", 127, "B&W threshold value");
-	const int dither = cimg_option("-d", 0, "Dither mode (0=none/threshold only, 1=floyd steinberg, 2=ordered 2x2, 3=ordered 3x3");
 	const bool save = cimg_option("-save", false, "Save individual MODE7 frames");
+	const bool simg = cimg_option("-simg", false, "Save individual image frames");
 	const bool sep = cimg_option("-sep", false, "Separated graphics");
 	const bool verbose = cimg_option("-v", false, "Verbose output");
-//	const int cbr_frames = cimg_option("-cbr", 0, "CBR frames [experimental/unfinished]");
-
-//	int w = 76, h = 57;
-//	std::sscanf(geom, "%d%*c%d", &w, &h);
 
 	if (cimg_option("-h", false, 0)) std::exit(0);
 	if (shortname == NULL)  std::exit(0);
 
-	CImg<unsigned char> src;
-
 	char filename[256];
 	char input[256];
-
-	unsigned char prevmode7[MODE7_MAX_SIZE];
-	unsigned char delta[MODE7_MAX_SIZE];
-	unsigned char mode7[MODE7_MAX_SIZE];
 
 	int totaldeltas = 0;
 	int totalbytes = 0;
 	int maxdeltas = 0;
 	int resetframes = 0;
 	int numpads = 0;
+	int totalsteve = 0;
+	int totalsteved = 0;
+	int totalmin = 0;
 
 	unsigned char *beeb = (unsigned char *) malloc(MODE7_MAX_SIZE * NUM_FRAMES);
 	unsigned char *ptr = beeb;
@@ -131,149 +268,32 @@ int main(int argc, char **argv)
 
 		// Convert to greyscale from RGB
 
-		cimg_forXY(src, x, y)
+		if (gmode)
 		{
-			src(x, y, 0) = pixel_to_grey(gmode, src(x, y, 0), src(x, y, 1), src(x, y, 2));
+			cimg_forXY(src, x, y)
+			{
+				src(x, y, 0) = pixel_to_grey(gmode, src(x, y, 0), src(x, y, 1), src(x, y, 2));
+				src(x, y, 1) = pixel_to_grey(gmode, src(x, y, 0), src(x, y, 1), src(x, y, 2));
+				src(x, y, 2) = pixel_to_grey(gmode, src(x, y, 0), src(x, y, 1), src(x, y, 2));
+			}
 		}
 
 		// Dithering
 
-		if (dither == 0)					// None / threshold
+		cimg_forXY(src, x, y)
 		{
-			cimg_forXY(src, x, y)
-			{
-				src(x, y, 0) = THRESHOLD(src(x, y, 0), thresh);
-			}
-		}
-		else if (dither == 1)				// Floyd Steinberg
-		{
-			cimg_forXY(src, x, y)
-			{
-				int grey = src(x, y, 0);
-				src(x, y, 0) = THRESHOLD(grey, 128);
-				int error = grey - src(x, y, 0);
-
-				if (x < src._width - 1)
-				{
-					grey = src(x + 1, y, 0) + error * 7 / 16;
-					src(x + 1, y, 0) = CLAMP(grey, 0, 255);
-				}
-
-				if( y < src._height - 1 )
-				{
-					if (x > 0)
-					{
-						grey = src(x - 1, y + 1, 0) + error * 3 / 16;
-						src(x - 1, y + 1, 0) = CLAMP(grey, 0, 255);
-					}
-
-					grey = src(x, y + 1, 0) + error * 5 / 16;
-					src(x, y + 1, 0) = CLAMP(grey, 0, 255);
-
-					if (x < src._width - 1)
-					{
-						grey = src(x + 1, y + 1, 0) + error * 1 / 16;
-						src(x + 1, y + 1, 0) = CLAMP(grey, 0, 255);
-					}
-						
-				}
-			}
-		}
-		else if (dither == 2)						// Ordered dither 2x2
-		{
-			cimg_forY(src, y)
-			{
-				cimg_forX(src, x)
-				{
-					int grey = src(x, y, 0) * 5 / 256;
-					src(x, y, 0) = THRESHOLD(grey, 1);
-
-					if (x < src._width - 1)
-					{
-						grey = src(x + 1, y, 0) * 5 / 256;
-						src(x + 1, y, 0) = THRESHOLD(grey, 3);
-					}
-
-					if (y < src._height - 1)
-					{
-						grey = src(x, y + 1, 0) * 5 / 256;
-						src(x, y + 1, 0) = THRESHOLD(grey, 4);
-
-						if (x < src._width - 1)
-						{
-							grey = src(x + 1, y + 1, 0) * 5 / 256;
-							src(x + 1, y + 1, 0) = THRESHOLD(grey, 2);
-						}
-					}
-					x++;
-				}
-				y++;
-			}
-		}
-		else if (dither == 3)						// Ordered dither 3x3
-		{
-			cimg_forY(src, y)
-			{
-				cimg_forX(src, x)
-				{
-					int grey = src(x, y, 0) * 10 / 256;
-					src(x, y, 0) = THRESHOLD(grey, 1);
-
-					if (x < src._width - 1)
-					{
-						grey = src(x + 1, y, 0) * 10 / 256;
-						src(x + 1, y, 0) = THRESHOLD(grey, 8);
-					}
-
-					if (x < src._width - 2)
-					{
-						grey = src(x + 2, y, 0) * 10 / 256;
-						src(x + 2, y, 0) = THRESHOLD(grey, 4);
-					}
-
-					if (y < src._height - 1)
-					{
-						grey = src(x, y + 1, 0) * 10 / 256;
-						src(x, y + 1, 0) = THRESHOLD(grey, 7);
-
-						if (x < src._width - 1)
-						{
-							grey = src(x + 1, y + 1, 0) * 10 / 256;
-							src(x + 1, y + 1, 0) = THRESHOLD(grey, 6);
-						}
-
-						if (x < src._width - 2)
-						{
-							grey = src(x + 2, y + 1, 0) * 10 / 256;
-							src(x + 2, y + 1, 0) = THRESHOLD(grey, 3);
-						}
-					}
-
-					if (y < src._height - 2)
-					{
-						grey = src(x, y + 2, 0) * 10 / 256;
-						src(x, y + 2, 0) = THRESHOLD(grey, 5);
-
-						if (x < src._width - 1)
-						{
-							grey = src(x + 1, y + 2, 0) * 10 / 256;
-							src(x + 1, y + 2, 0) = THRESHOLD(grey, 2);
-						}
-
-						if (x < src._width - 2)
-						{
-							grey = src(x + 2, y + 2, 0) * 10 / 256;
-							src(x + 2, y + 2, 0) = THRESHOLD(grey, 9);
-						}
-					}
-
-					x+=2;
-				}
-
-				y+=2;
-			}
+			src(x, y, 0) = THRESHOLD(src(x, y, 0), thresh);
+			src(x, y, 1) = THRESHOLD(src(x, y, 1), thresh);
+			src(x, y, 2) = THRESHOLD(src(x, y, 2), thresh);
 		}
 
+		if (simg)
+		{
+			sprintf(filename, "%s\\test\\%s-%d.png", DIRECTORY, FILENAME, n);
+			src.save(filename);
+		}
+
+		// Conversion to MODE 7
 
 		cimg_forY(src, y)
 		{
@@ -281,22 +301,13 @@ int main(int argc, char **argv)
 			mode7[y7 * MODE7_WIDTH] = MODE7_COL0; // graphic white
 			mode7[1 + (y7 * MODE7_WIDTH)] = MODE7_COL1; // graphic white
 
-			cimg_forX(src, x)
+
+			// Copy the resulting character data into MODE 7 screen
+			for (int x7 = FRAME_FIRST_COLUMN; x7 < MODE7_WIDTH; x7++)
 			{
-				int x7 = x / 2;
-
-			//	printf("(%d, %d) = (0x%x, 0x%x, 0x%x)\n", x, y, src(x, y, 0), src(x, y, 1), src(x, y, 2));
-
-				mode7[(y7 * MODE7_WIDTH) + (x7 + (MODE7_WIDTH-FRAME_WIDTH))] = 32															// bit 5 always set!
-						+ (src(x, y, 0)				?  1 : 0)			// (x,y) = bit 0
-						+ (src(x + 1, y, 0)			?  2 : 0)			// (x+1,y) = bit 1
-						+ (src(x, y + 1, 0)			?  4 : 0)			// (x,y+1) = bit 2
-						+ (src(x + 1, y + 1, 0)		?  8 : 0)			// (x+1,y+1) = bit 3
-						+ (src(x, y + 2, 0)			? 16 : 0)			// (x,y+2) = bit 4
-						+ (src(x + 1, y + 2, 0)		? 64 : 0);			// (x+1,y+2) = bit 6
-
-				x++;
+				mode7[(y7 * MODE7_WIDTH) + (x7)] = get_graphic_char_from_image(x7, y7, 7, 0);
 			}
+
 			// printf("\n");
 
 			y += 2;
@@ -308,7 +319,7 @@ int main(int argc, char **argv)
 //			if (i % 40 == 39)printf("\n");
 //		}
 
-		if (n == 1)
+		if (n == start)
 		{
 			*ptr++ = LO(FRAME_SIZE);
 			*ptr++ = HI(FRAME_SIZE);
@@ -319,8 +330,6 @@ int main(int argc, char **argv)
 		// How many deltas?
 		int numdeltas = 0;
 		int numdeltabytes = 0;
-		int numliterals = 0;
-		int numlitbytes = 0;
 
 		for (int i = 0; i < FRAME_SIZE; i++)
 		{
@@ -339,127 +348,131 @@ int main(int argc, char **argv)
 		totaldeltas += numdeltas;
 		if (numdeltas > maxdeltas) maxdeltas = numdeltas;
 		delta_counts[n] = numdeltas;
+		numdeltabytes = numdeltas * BYTES_PER_DELTA;
 
-		if (numdeltas > FRAME_SIZE/2)
+		int stevebytes = calc_steve_size(mode7, MODE7_BLANK, NULL);
+		int stevedbytes = INT_MAX;// calc_steve_size(delta, 0, NULL);
+		int minsteve = stevebytes < stevedbytes ? stevebytes : stevedbytes;
+
+		if (numdeltabytes < minsteve)
 		{
-			numdeltabytes = FRAME_SIZE;
-			resetframes++;
-
-			if (verbose)
+			if (numdeltas == 0)
 			{
-				printf("*** RESET *** (%x)\n", ptr - beeb);
+				// Blank frame
+				*ptr++ = 0;
 			}
+			else
+			{
+				// Delta frame
 
-		//	*ptr++ = 0;
-			*ptr++ = 0x80;			// reset frame
+				if (numdeltas > FRAME_SIZE / BYTES_PER_DELTA)
+				{
+					printf("*** RESET *** (%x)\n", ptr - beeb);
+				}
 
-			memcpy(ptr, mode7, FRAME_SIZE);
-			ptr += FRAME_SIZE;
-		}
-		else if (numdeltas == 0)
-		{
-			// Blank frame
+				if (numdeltas > 0xFC)
+				{
+					printf("*** OVERFLOW *** (%x)\n", ptr - beeb);
+				}
 
-			*ptr++ = 0x81;			// blank frame
+#if 0
+				*ptr++ = 1;
+
+				int previ = 0;
+
+				for (int i = 0; i < FRAME_SIZE; i++)
+				{
+					if (delta[i] != 0)
+					{
+						unsigned char byte = mode7[i];			//  ^ prevmode7[i] for EOR with prev.
+
+						int offset = (i - previ);
+
+						if (previ == 0)
+						{
+							*ptr++ = HI(offset);				// offset HI
+							offset -= HI(offset) * 256;			// special case	- THIS CAN RESULT IN VALID ZERO OFFSET
+						}
+
+						while (offset > 255)
+						{
+							*ptr++ = 0xff;						// max offset
+							*ptr++ = 0;							// no char
+
+							offset -= 255;
+							numpads++;
+						}
+
+						*ptr++ = offset;
+						*ptr++ = byte;
+
+						previ = i;								// or 0 for offset from screen start
+					}
+				}
+
+				*ptr++ = 0;					// end of frame offset
+				*ptr++ = 0xff;				// end of frame byte		do we need this?
+#else
+				*ptr++ = LO(numdeltas);
+
+				int previ = 0;
+
+				for (int i = 0; i < FRAME_SIZE; i++)
+				{
+					if (delta[i] != 0)
+					{
+						unsigned char byte = mode7[i];			//  ^ prevmode7[i] for EOR with prev.
+
+						int offset = (i - previ);
+						int data = (byte & 31) | ((byte & 64) >> 1);		// mask out bit 5, shift down bit 6
+
+						unsigned short pack = (data << 10) | offset;
+
+						*ptr++ = LO(pack);
+						*ptr++ = HI(pack);
+
+						previ = i;								// or 0 for offset from screen start
+					}
+				}
+#endif
+			}
 		}
 		else
 		{
-			numdeltabytes = numdeltas * 2;
+			// Steve frame
 
-		//	*ptr++ = LO(numdeltas);
-		//	*ptr++ = HI(numdeltas);
-
-			int previ = 0;
-
-			for (int i = 0; i < FRAME_SIZE; i++)
+			if (stevebytes < stevedbytes)
 			{
-				if (delta[i] != 0)
-				{
-					unsigned char byte = mode7[i];			//  ^ prevmode7[i] for EOR with prev.
+				// Full steve
+				*ptr++ = 0xFE;
 
-				//	unsigned short pack = byte & 31;		// remove bits 5 & 6
+				calc_steve_size(mode7, MODE7_BLANK, &ptr);
+			}
+			else
+			{
+				// Delta steve
+				*ptr++ = 0XFD;
 
-				//	pack |= (byte & 64) >> 1;				// shift bit 6 down
-				//	pack = (i - previ) + (pack << 10);						// shift whole thing up 10 bits and add offset
-
-				//	*ptr++ = LO(pack);
-				//	*ptr++ = HI(pack);
-
-					int offset = (i - previ);
-
-				//	if (n == 715)
-				//	{
-				//		printf("[%d] i=%d previ=%d offset=%d byte=%d (%x)\n", n, i, previ, offset, byte, (ptr - beeb));
-				//	}
-
-					if (previ == 0)
-					{
-						*ptr++ = HI(offset);				// offset HI
-						offset -= HI(offset) * 256;			// special case	- THIS CAN RESULT IN VALID ZERO OFFSET
-					}
-
-					while (offset > 255)
-					{
-						printf("** PAD ** (%x) offset=%d\n", (ptr - beeb), offset);
-
-						*ptr++ = 0xff;						// max offset
-						*ptr++ = 0;							// no char
-
-						offset -= 255;
-						numpads++;
-					}
-
-					*ptr++ = offset;
-					*ptr++ = byte;
-
-					previ = i;								// or 0 for offset from screen start
-				}
+				calc_steve_size(delta, 0, &ptr);
 			}
 
-			*ptr++ = 0;					// end of frame offset
-			*ptr++ = 0xff;				// end of frame byte
 		}
 
-		{
-			int blanks = 0;
-
-			for (int i = 0; i < FRAME_SIZE; i++)
-			{
-				if (delta[i] == 0 && blanks<255)
-				{
-					blanks++;
-				}
-				else
-				{
-					int m = i;
-					while (delta[m] != 0 && m < FRAME_SIZE) m++;
-					int literals = m - i;
-					
-					blanks = 0;
-
-					numliterals++;
-
-					numlitbytes += 2 + literals;
-
-					i = m;
-
-					// Terminate early if last literal
-					while (delta[m] == 0 && m < FRAME_SIZE) m++;
-					if (m == FRAME_SIZE) i = m;
-				}
-			}
-		}
 
 		if (verbose)
 		{
-			printf("Frame: %d  numdeltas=%d (%d) numliterals=%d (%d)\n", n, numdeltas, numdeltabytes, numliterals, numlitbytes);
+			printf("Frame: %d  numdeltas=%d (%d) stevebytes=%d stevedbytes=%d\n", n, numdeltas, numdeltabytes, stevebytes, stevedbytes);
 		}
 		else
 		{
 			printf("\rFrame: %d/%d", n, NUM_FRAMES);
 		}
 
+		totalmin += 2 + (numdeltabytes < minsteve ? numdeltabytes : minsteve);
+
 		totalbytes += 2 + numdeltabytes;
+		totalsteve += stevebytes;
+		totalsteved += stevedbytes;
 
 		if (save)
 		{
@@ -495,23 +508,28 @@ int main(int argc, char **argv)
 
 		memcpy(prevmode7, mode7, MODE7_MAX_SIZE);
 
+		//		if (n % 10 == 0) n++;
 	}
 
 	*ptr++ = 0xff;					// end of stream
 //	*ptr++ = 0xff;
 
-	printf("\ntotal frames = %d\n", NUM_FRAMES);
+	int total_frames = NUM_FRAMES - start + 1;
+	printf("\ntotal frames = %d\n", total_frames);
 	printf("frame size = %d\n", FRAME_SIZE);
 	printf("total deltas = %d\n", totaldeltas);
 	printf("total bytes = %d\n", totalbytes);
 	printf("max deltas = %d\n", maxdeltas);
 	printf("reset frames = %d\n", resetframes);
 	printf("pad deltas = %d\n", numpads);
-	printf("actual data size = %d\n", (ptr-beeb));
-	printf("deltas / frame = %f\n", totaldeltas / (float)NUM_FRAMES);
-	printf("bytes / frame = %f\n", totalbytes / (float)NUM_FRAMES);
-	printf("bytes / second = %f\n", 25.0f * totalbytes / (float)NUM_FRAMES);
+	printf("actual data size = %d\n", (ptr - beeb));
+	printf("deltas / frame = %f\n", totaldeltas / (float)total_frames);
+	printf("bytes / frame = %f\n", totalbytes / (float)total_frames);
+	printf("bytes / second = %f\n", 25.0f * totalbytes / (float)total_frames);
 	printf("beeb size = %d bytes\n", ptr - beeb);
+	printf("steve byte size = %d\n", totalsteve);
+	printf("steve delta byte size = %d\n", totalsteved);
+	printf("theoretical minimum = %d", totalmin);
 
 	sprintf(filename, "%s\\%s_beeb.bin", DIRECTORY, FILENAME);
 	file = fopen((const char*)filename, "wb");

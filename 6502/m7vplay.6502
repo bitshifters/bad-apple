@@ -19,6 +19,8 @@ osgbpb = &FFD1
 
 argv = &F2
 
+IRQ1V = &204
+IRQ2V = &206
 EVENTV = &0220
 
 INKEY_esc = 112
@@ -27,6 +29,7 @@ INKEY_q = 16
 SEI_OP = $78
 CLI_OP = $58
 NOP_OP = $ea
+JMP_OP = &4C
 
 
 \ ******************************************************************
@@ -35,11 +38,14 @@ NOP_OP = $ea
 
 _DEBUG = TRUE
 _WAIT_KEYPRESS = FALSE				; could implement play/pause/step
-_ENABLE_EVENTS = TRUE
 _ENABLE_WALLCLOCK = TRUE
 _COUNT_DECRUNCHES = FALSE
 _TRY_TO_MATCH_FRAMERATE = FALSE
 _CHECK_LOAD_BUFFER = FALSE
+
+_ENABLE_CMD_LINE_PARAMS = FALSE
+
+_MUSIC_START_DELAY = 20
 
 \ ******************************************************************
 \ *	Define macros
@@ -57,7 +63,7 @@ ENDMACRO
 \ ******************************************************************
 
 \\ EXOMISER (compression library)
-EXO_buffer_len = 4096
+EXO_buffer_len = 3072			; was 4096
 
 \\ MODE 7
 MODE7_base_addr = &7C00
@@ -78,20 +84,24 @@ MODE7_separated = 154
 \ *	Define app constants
 \ ******************************************************************
 
-VID_default_mode7_ypos = 3
-VID_default_frame_height = 19		; 14 = Grav
+VID_default_mode7_ypos = 2
+VID_default_frame_height = 22		; 19
 VID_default_frame_size = (MODE7_char_width * VID_default_frame_height)
 VID_default_frame_addr = MODE7_base_addr + (VID_default_mode7_ypos * MODE7_char_width)
 
 DFS_track_size = (10 * 256)
 
 DISK2_drive_no = 2			; should be 2
-DISK1_first_track = 1
-DISK1_last_track = 79		; could potentially deduce these from DFS catalog
+DISK1_first_track = 6
+DISK1_last_track = 80		; could potentially deduce these from DFS catalog
 DISK2_first_track = 1
-DISK2_last_track = 79		; doesn't actually matter as data stream should indicate end of buffer
+DISK2_last_track = 80		; doesn't actually matter as data stream should indicate end of buffer
 
 STREAM_buffer_size = (4 * DFS_track_size)
+
+TIMER_latch = 20000-2		; 20ms = 1x vsync :)
+
+FX_frame = 336
 
 \ ******************************************************************
 \ *	Define fast (zero page) runtime variables
@@ -118,8 +128,6 @@ ORG &7B
 GUARD &9F
 
 \\ System vars
-.old_eventv				SKIP 2
-
 .writeptr				SKIP 2
 
 .num_deltas				SKIP 2
@@ -131,6 +139,7 @@ GUARD &9F
 .decode_lock			SKIP 1
 .track_no				SKIP 1
 .load_to_HI				SKIP 1
+.xpos					SKIP 1
 
 IF _ENABLE_WALLCLOCK
 .clock_vsync			SKIP 1
@@ -149,11 +158,45 @@ IF _COUNT_DECRUNCHES
 .decrunch_count			SKIP 2
 ENDIF
 
+.old_irqv				SKIP 2
+
+
+\ ******************************************************************
+\ *	MUSIC PLAYER
+\ ******************************************************************
+
+INCLUDE "6502\exomiser.h.asm"
+INCLUDE "6502\vgmplayer.h.asm"
+
+
+\ ******************************************************************
+\ *	STEAL OS MEMORY
+\ ******************************************************************
+
+; -------------------------------------------------------------------
+; this 156 byte table area may be relocated. It may also be clobbered
+; by other data between decrunches.
+; -------------------------------------------------------------------
+decrunch_table = &A00
+;.decrunch_table SKIP 156
+tabl_bi = decrunch_table
+tabl_lo = decrunch_table + 52
+tabl_hi = decrunch_table + 104
+
+mus_decrunch_table = &B00
+;.mus_decrunch_table  SKIP MUS_TABL_SIZE
+MUS_tabl_bi = mus_decrunch_table
+MUS_tabl_lo = MUS_tabl_bi + 52
+MUS_tabl_hi = MUS_tabl_bi + 104
+
+
+
+
 \ ******************************************************************
 \ *	Start address to be saved
 \ ******************************************************************
 
-ORG &1900	      					; code origin - assume standard BBC Micro
+ORG &1100	      					; code origin - assume standard BBC Micro
 GUARD &7C00							; ensure code size doesn't hit start of screen memory
 
 .start
@@ -171,7 +214,9 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 {
 \\ Determine command line params
 
+IF _ENABLE_CMD_LINE_PARAMS
 	JSR cmd_line_params
+ENDIF
 
 \\ ***** System initialise ***** \\
 
@@ -183,15 +228,17 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 	LDA #23: JSR oswrch
 	LDA #1: JSR oswrch
 	LDA #0: JSR oswrch
-	LDA #0: JSR oswrch
-	LDA #0: JSR oswrch
-	LDA #0: JSR oswrch
-	LDA #0: JSR oswrch
-	LDA #0: JSR oswrch
-	LDA #0: JSR oswrch
-	LDA #0: JSR oswrch
+	JSR oswrch
+	JSR oswrch
+	JSR oswrch
+	JSR oswrch
+	JSR oswrch
+	JSR oswrch
+	JSR oswrch
 
 	\\ Set gfx mode
+	LDX #0
+	LDA #MODE7_graphic_black+7
 	JSR teletexel_init
 
 	\\ Zero our variables
@@ -214,6 +261,13 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 	IF _ENABLE_WALLCLOCK
 	STA clock_vsync
 	ENDIF
+
+	\\ Initialise music
+
+	LDX #LO(music_data)
+	LDY #HI(music_data)
+	JSR vgm_init_stream
+	BMI read_error
 
 	\\ Load our entire stream buffer from first track
 
@@ -264,9 +318,41 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 	ADC VID_frame_start+1
 	STA VID_frame_end+1
 
-	IF _ENABLE_EVENTS
-	LDX #LO(decode_eventv)
-	LDY #HI(decode_eventv)
+	LDA #19
+	JSR osbyte
+
+	\\ Enable irq
+	{
+		SEI
+		LDA IRQ1V:STA old_irqv
+		LDA IRQ1V+1:STA old_irqv+1
+	
+		LDA #LO(irq_handler):STA IRQ1V
+		LDA #HI(irq_handler):STA IRQ1V+1		; set interrupt handler
+
+		LDA #64						; A=00000000
+		STA &FE4B					; R11=Auxillary Control Register (timer 1 latched mode)
+
+		LDA #&C0					; A=11000000
+		STA &FE4E					; R14=Interrupt Enable (enable timer 1 interrupt)
+
+		LDA #LO(TIMER_latch/2)
+		STA &FE44					; R4=T1 Low-Order Latches (write)
+		LDA #HI(TIMER_latch/2)
+		STA &FE45					; R5=T1 High-Order Counter
+		
+		LDA #LO(TIMER_latch)
+		STA &FE46
+		LDA #HI(TIMER_latch)
+		STA &FE47
+		CLI
+	}
+
+	\\ Start the music!
+
+	IF _MUSIC_START_DELAY = 0
+	LDX #LO(poll_player)
+	LDY #HI(poll_player)
 	JSR start_eventv
 	ENDIF
 
@@ -277,50 +363,34 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 	LDA #19
 	JSR osbyte
 
-	IF _ENABLE_EVENTS = FALSE
-	\\ Increment frame counter
+	IF _MUSIC_START_DELAY <> 0
 	{
-		INC frame_no
-		BNE no_carry
-		INC frame_no+1
-		.no_carry
-	}
+		.music_start_code
+		LDA frame_no
+		CMP #_MUSIC_START_DELAY
+		BNE not_ready
 
-	\\ Decode frame header
-	JSR decode_frame_header
-	BCS read_error
+		LDX #LO(poll_player)
+		LDY #HI(poll_player)
+		JSR start_eventv
+
+		LDA #JMP_OP			; JMP
+		STA music_start_code
+		LDA #LO(not_ready)
+		STA music_start_code+1
+		LDA #HI(not_ready)
+		STA music_start_code+2
+		.not_ready
+	}
 	ENDIF
+
+;	LDA vsync_count
+;	.wait_for_vsync
+;	CMP vsync_count
+;	BEQ wait_for_vsync
 
 	IF _DEBUG
 	JSR write_debug_info
-	ENDIF
-
-	IF _ENABLE_EVENTS = FALSE
-	IF _WAIT_KEYPRESS
-	{
-		.no_key_pressed
-
-		\\ Check for pressed keys
-		LDA #121
-		LDX #&10
-		JSR osbyte
-
-		\\ Still holding same key
-		CPX key_held
-		BEQ no_key_pressed
-
-		\\ Remember current key
-		STX key_held
-
-		\\ Any key pressed?
-		CPX #&FF
-		BEQ no_key_pressed
-	}
-	ENDIF
-
-	\\ Decode our video frame
-	JSR decode_frame_data
-	BCS read_error
 	ENDIF
 
 	\\ Load more data if needed
@@ -345,9 +415,17 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 	JMP next_frame
 
 	.track_load_error
-	IF _ENABLE_EVENTS
+	SEI
+	LDA old_irqv:STA IRQ1V
+	LDA old_irqv+1:STA IRQ1V+1		; set interrupt handler
+	CLI
+
+	\\ Stop the music!
+	.wait_for_music
+	LDA vgm_player_ended
+	BEQ wait_for_music	
+
 	JSR stop_eventv
-	ENDIF
 
 	\\ Exit cleanly (we hope)
 	.return
@@ -357,6 +435,7 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 \\ <drive no disk 1> <drive no disk 2> <screen y pos> <frame height>
 \\ Returns number in A but only valid if carry clear
 
+IF _ENABLE_CMD_LINE_PARAMS
 .cmd_line_get_number
 {
 	\\ Skip whitespace
@@ -464,7 +543,7 @@ GUARD &7C00							; ensure code size doesn't hit start of screen memory
 	.return
 	RTS
 }
-
+ENDIF
 
 
 
@@ -521,15 +600,8 @@ IF _DEBUG
 	JSR debug_write_hex
 
 	INY
-	IF _ENABLE_EVENTS
 	LDA vsync_count
 	JSR debug_write_hex
-	ELSE
-	LDA num_deltas+1
-	JSR debug_write_hex
-	LDA num_deltas
-	JSR debug_write_hex
-	ENDIF
 
 	IF _ENABLE_WALLCLOCK
 	INY
@@ -552,7 +624,7 @@ ENDIF
 	JSR get_decrunched_byte
 	BCS return
 
-	STA num_deltas				; NOT ACTUALLY NUM DELTAS BUT FRAME TYPE
+	STA num_deltas				; NOT ACTUALLY NUM DELTAS + FRAME TYPE
 
 	\\ Reset our write ptr
 	LDA VID_frame_start			; #LO(VID_frame_addr)
@@ -566,28 +638,72 @@ ENDIF
 
 .decode_entire_frame
 {
-	\\ Write entire frame (<=1000 bytes)
+	LDA #VID_default_frame_height			; num rows
+	STA num_deltas
+
+	.rows
+	LDY #2
+
 	.loop
+	STY xpos
+
 	JSR get_decrunched_byte
 	BCS return				; read error
-	LDY #0					; this was missing?!
-	STA (writeptr),Y
 
-	INC writeptr
-	BNE no_carry
+	CMP #128
+	BCS write_one_char
+
+	CMP #64
+	BCS write_many_blocks
+
+	\\ write many spaces
+	TAX
+	LDA #32
+	LDY xpos
+	.space_loop
+	STA (writeptr), Y
+	INY
+	DEX
+	BNE space_loop
+	JMP check_end_of_row
+
+	.write_many_blocks
+	AND #&BF			; remove 64
+	TAX
+	LDA #127
+	LDY xpos
+	.block_loop
+	STA (writeptr), Y
+	INY
+	DEX
+	BNE block_loop
+	JMP check_end_of_row
+
+	.write_one_char
+	LDY xpos
+	STA (writeptr),Y
+	INY
+
+	.check_end_of_row
+	CPY #MODE7_char_width
+	BCC loop
+
+	DEC num_deltas
+	BEQ return
+
+	\\ Next row
+	CLC
+	LDA writeptr
+	ADC #MODE7_char_width
+	STA writeptr
+	BCC no_carry
 	INC writeptr+1
 	.no_carry
 
-	LDA writeptr
-	CMP VID_frame_end		; #LO(VID_frame_addr + VID_frame_size)
-	BNE loop
-	LDA writeptr+1
-	CMP VID_frame_end+1		; #HI(VID_frame_addr + VID_frame_size)
-	BNE loop
-
-	CLC						; no read error
+	JMP rows
 
 	.return
+	CLC						; no read error
 	RTS
 }
 
@@ -595,70 +711,75 @@ ENDIF
 {
 	\\ Check if this is a special frame before we start
 	LDA num_deltas
-	BMI special_frame
+	BEQ completed			; empty frame
+
+	CMP #&FE
+	BCS special_frame
 
 	\\ Regular frame (deltas)
-
-	\\ This is high byte of first offset
-	ADC writeptr+1
-	STA writeptr+1
 
 	.loop
 
 	\\ Get low byte of offset
 	JSR get_decrunched_byte
 	BCS return
+	STA packed_delta
 
-	\\ Add it to our write pointer
+	JSR get_decrunched_byte
+	BCS return
+	STA packed_delta+1
+	
+	\\ Decode offset (10 bits)
+	CLC
+	LDA packed_delta
 	ADC writeptr
 	STA writeptr
 
-	\\ Increment high byte if carry
-	{
-		BCC no_carry
-		INC writeptr+1
-		.no_carry
-	}
+	LDA packed_delta+1
+	AND #&3						; only need bottom 2 bits
+	ADC writeptr+1
+	STA writeptr+1
 
-	\\ Get our MODE 7 byte
-	JSR get_decrunched_byte
-	BCS return
+	\\ Decode pixels into MODE 7 byte (6 bits)
+	\\ 00X1 1111
+	\\ 0X01 1111
+	\\ 0X11 1111
 
-	\\ End of frame?
-	CMP #&FF
-	BEQ completed
+	LDA packed_delta+1
+	AND #128					; top bit 7
+	LSR A						; shift down to bit 6
+	STA shifted_bit
 
-	\\ Ignore if NULL char
-	CMP #0
-	BEQ loop
+	LDA packed_delta+1	
+	LSR A
+	LSR A						; shift down twice
+	ORA #32						; always need 32 for MODE 7
+	ORA shifted_bit				; mask in bit 6
 
-	\\ Write it to screen!
+	\\ Write to screen! (do this without indirect write?)
 	LDY #0
 	STA (writeptr),Y
 
 	\\ Next delta
-	JMP loop
-
-	.special_frame
-	CMP #&81
-	BEQ completed					; empty frame
-
-	CMP #&80
-	BEQ full_frame					; &FFFF indicates end of stream
-
-	\\ End of stream
-	INC error_flag
-	BNE return
-
-	\\ Write entire frame (<=1000 bytes)
-	.full_frame
-	JSR decode_entire_frame
-
-	.return
-	RTS
+	DEC num_deltas
+	BNE loop
 
 	.completed
 	CLC
+	RTS
+
+	.special_frame
+	CMP #&FE
+	BNE end_of_stream
+	
+	\\ Decode entire frame using Steve's codec
+	JMP decode_entire_frame
+
+	\\ End of stream
+	.end_of_stream
+	INC error_flag
+
+	.return
 	RTS
 }
 
@@ -742,73 +863,38 @@ ENDIF
 	RTS
 \\}
 
+
 \ ******************************************************************
-\ *	Event driven main loop
+\ * IRQ
 \ ******************************************************************
 
-.decode_eventv
+.irq_handler
 {
-	php
-	cmp #4
-	beq vsync
-	JMP not_vsync
+	LDA &FC
+	PHA
 
-	.vsync
+	\\ Which interrupt?
+
+	LDA &FE4D
+	AND #&40			; timer 1
+	BNE is_timer1
+
+;	LDA &FE4D
+;	AND #2
+;	BNE is_vsync
+
+	\\ Pass on to OS IRQ handler
+	.return_to_os
+	PLA
+	STA &FC
+	JMP (old_irqv)		; RTI
+
+	.is_timer1
+	\\ Acknowledge timer1 interrupt
+	STA &FE4D
+
+	\\ Increment vsync counter
 	INC vsync_count
-
-	\\ Preserve registers
-	pha
-
-	\\ If we're already busy just exit function
-	LDA decode_lock
-	BNE early_out
-
-	\\ If we're ahead of video frame rate early out
-	IF _TRY_TO_MATCH_FRAMERATE
-	LDA vsync_count
-	BMI early_out
-	ENDIF
-
-	\\ Set a lock on our decode function
-	INC decode_lock
-	
-	TXA:PHA:TYA:PHA
-
-	\\ Increment frame counter
-	{
-		INC frame_no
-		BNE no_carry
-		INC frame_no+1
-		.no_carry
-	}
-
-	\\ Decode frame header
-	JSR decode_frame_header
-	BCS read_error
-
-	\\ Decode the video frame
-	JSR decode_frame_data
-	BCS read_error
-
-	\\ Indicate our frame rate
-	DEC vsync_count
-	IF _TRY_TO_MATCH_FRAMERATE
-	DEC vsync_count
-	ENDIF
-
-	\\ Release our lock
-	DEC decode_lock
-	BEQ return
-
-	\\ Indicate read error
-	.read_error
-	INC error_flag
-
-	\\ Restore registers
-	.return
-	PLA:TAY:PLA:TAX
-	
-	.early_out
 
 	IF _ENABLE_WALLCLOCK
 	\\ Increment wall clock
@@ -823,48 +909,99 @@ ENDIF
 	STA clock_vsync
 	ENDIF
 
-	pla
+	\\ If we're already busy just exit function
+	LDA decode_lock
+	BNE return_timer1
 
-	\\ Return
-    .not_vsync
-	plp
-	rts
+	\\ If we're ahead of video frame rate early out
+	LDA vsync_count
+	BMI return_timer1
+
+	\\ Set a lock on our decode function
+	INC decode_lock
+	
+	\\ Increment frame counter
+	{
+		INC frame_no
+		BNE no_carry
+		INC frame_no+1
+		.no_carry
+	}
+
+	\\ Frame FX
+	{
+		.test_fx_frame
+		LDA frame_no+1
+		CMP #HI(FX_frame)
+		BNE no_fx
+		LDA frame_no
+		CMP #LO(FX_frame)
+		BNE no_fx
+		
+		LDX #1
+		LDA #MODE7_separated
+		JSR teletexel_init
+
+		LDA #JMP_OP			; JMP
+		STA test_fx_frame
+		LDA #LO(no_fx)
+		STA test_fx_frame+1
+		LDA #HI(no_fx)
+		STA test_fx_frame+2
+		.no_fx
+	}
+
+	\\ Store registers in case of interupts
+	TXA:PHA:TYA:PHA
+
+	\\ Decode frame header
+	JSR decode_frame_header
+
+	\\ Check for error
+	BCS read_error
+
+	\\ Decode the video frame
+	CLI
+	JSR decode_frame_data						; <-- this is the slowest bit!
+	SEI
+
+	.read_error
+	BCC no_read_error
+
+	\\ Indicate error
+	INC error_flag
+
+	.no_read_error
+	\\ Restore registers
+	PLA:TAY:PLA:TAX
+
+	\\ Video data runs at 25Hz so take two frames off our sync counter
+
+	DEC vsync_count
+	DEC vsync_count
+
+	\\ Remove our work lock
+	DEC decode_lock
+
+	.return_timer1
+
+	\\ Exit
+	PLA
+	STA &FC
+	JMP (old_irqv)		; RTI
 }
-
 
 \ ******************************************************************
 \ *	Set up MODE 7 screen
 \ ******************************************************************
 
+; X=column, A=character code
 .teletexel_init						; set blank screen
 {
-	\\ Reset our write ptr
-	LDA #LO(MODE7_base_addr)
-	STA writeptr
-	LDA #HI(MODE7_base_addr)
-	STA writeptr+1
-
-	LDY #0
-	.loop
-	LDA #MODE7_graphic_black + 7	; white
-	STA (writeptr),Y
-
-	\\ 2nd column here
-
-	CLC
-	LDA writeptr
-	ADC #MODE7_char_width
-	STA writeptr
-	LDA writeptr+1
-	ADC #0
-	STA writeptr+1
-
-	LDA writeptr
-	CMP #LO(MODE7_base_addr + MODE7_screen_size)
-	BNE loop
-	LDA writeptr+1
-	CMP #HI(MODE7_base_addr + MODE7_screen_size)
-	BNE loop
+	FOR n,0,VID_default_frame_height-1
+	addr=VID_default_frame_addr + n*MODE7_char_width
+	STA addr, X
+	NEXT
 
 	.return
 	RTS
@@ -874,6 +1011,9 @@ ENDIF
 \ ******************************************************************
 \ *	Event Vector Routines
 \ ******************************************************************
+
+.old_eventv
+EQUW 0
 
 .start_eventv				; new event handler in X,Y
 {
@@ -912,7 +1052,6 @@ ENDIF
 
 	rts
 }
-
 
 \ ******************************************************************
 \ *	Debug helpers
@@ -1357,6 +1496,7 @@ EQUB 0				; returned error value
 \ *	Look up tables
 \ ******************************************************************
 
+IF _ENABLE_CMD_LINE_PARAMS
 .mode7_char_width_LO
 FOR n,0,25,1
 EQUB LO(n * MODE7_char_width)
@@ -1366,21 +1506,29 @@ NEXT
 FOR n,0,25,1
 EQUB HI(n * MODE7_char_width)
 NEXT
+ENDIF
+
+\ ******************************************************************
+\ *	MUSIC PLAYER
+\ ******************************************************************
+
+INCLUDE "6502\exomiser.asm"
+INCLUDE "6502\vgmplayer.asm"
+
+.code_end
+
+\ ******************************************************************
+\ *	MUSIC DATA
+\ ******************************************************************
+
+.music_data
+INCBIN "bbcapple-doesthiscompressbetter.bin.exo"
 
 \ ******************************************************************
 \ *	End address to be saved
 \ ******************************************************************
 
 .end
-
-; -------------------------------------------------------------------
-; this 156 byte table area may be relocated. It may also be clobbered
-; by other data between decrunches.
-; -------------------------------------------------------------------
-.decrunch_table
-.tabl_bi  SKIP 156
-tabl_lo = decrunch_table + 52
-tabl_hi = decrunch_table + 104
 
 ; -------------------------------------------------------------------
 ; end of decruncher
@@ -1406,6 +1554,15 @@ ALIGN &100
 .STREAM_buffer_start
 SKIP STREAM_buffer_size
 .STREAM_buffer_end
+
+PRINT "Code size =", code_end-start, " (", ~(code_end-start), ") bytes."
+PRINT "Music size =", end-music_data, " (", ~(end-music_data), ") bytes."
+PRINT "Video decompress buffer size =", EXO_buffer_end-EXO_buffer_start, " (", ~(EXO_buffer_end-EXO_buffer_start), ") bytes."
+PRINT "Streaming buffer size =", STREAM_buffer_end-STREAM_buffer_start, " (", ~(STREAM_buffer_end-STREAM_buffer_start), ") bytes."
+
+PRINT "TOP =", ~*
+PRINT "GUARD = &7C00"
+PRINT "Bytes free =", &7C00-P%
 
 \ ******************************************************************
 \ *	Save the code
