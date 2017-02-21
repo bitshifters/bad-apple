@@ -47,6 +47,8 @@ _ENABLE_CMD_LINE_PARAMS = FALSE
 
 _MUSIC_START_DELAY = 20
 
+_MUS_BUFFER_2K = TRUE		; enable this to use the 'final' version of the music
+
 \ ******************************************************************
 \ *	Define macros
 \ ******************************************************************
@@ -1522,7 +1524,18 @@ INCLUDE "6502\vgmplayer.asm"
 \ ******************************************************************
 
 .music_data
-INCBIN "bbcapple-doesthiscompressbetter.bin.exo"
+IF _MUS_BUFFER_2K
+	; 'Final' version of music compressed using:
+	;  exomizer.exe raw -c -m 2048 <file.raw> -o <file.exo>
+	INCBIN "bbcapple.bin.exo"
+	; gotta pad this out to same size as music below so that track alignment is good
+	; TODO: a better fix is to sort the disk image packing
+	SKIP (music_data+12095)-*
+ELSE
+	; 'Party' version of music compressed using:
+	;  exomizer.exe raw -c -m 1024 <file.raw> -o <file.exo>
+	INCBIN "bbcapple-doesthiscompressbetter.bin.exo"
+ENDIF
 
 \ ******************************************************************
 \ *	End address to be saved
@@ -1543,6 +1556,13 @@ ALIGN &100
 .EXO_buffer_start
 SKIP EXO_buffer_len
 .EXO_buffer_end
+
+IF _MUS_BUFFER_2K
+\\ Exomiser music unpack buffer
+.MUS_buffer_start
+SKIP MUS_buffer_len
+.MUS_buffer_end
+ENDIF
 
 \ ******************************************************************
 \ *	EXO VGM data file
