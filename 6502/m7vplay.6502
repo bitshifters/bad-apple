@@ -94,7 +94,7 @@ VID_default_frame_addr = MODE7_base_addr + (VID_default_mode7_ypos * MODE7_char_
 DFS_track_size = (10 * 256)
 
 DISK2_drive_no = 2			; should be 2
-DISK1_first_track = 6		; the track at which the video file is located on side 0; all tracks prior to this are reserved for code
+DISK1_first_track = 7		; the track at which the video file is located on side 0; all tracks prior to this are reserved for code
 DISK1_last_track = 80		; could potentially deduce these from DFS catalog
 DISK2_first_track = 1
 DISK2_last_track = 80		; doesn't actually matter as data stream should indicate end of buffer
