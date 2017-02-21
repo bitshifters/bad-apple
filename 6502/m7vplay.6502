@@ -60,7 +60,7 @@ ENDMACRO
 \ ******************************************************************
 
 \\ EXOMISER (compression library)
-EXO_buffer_len = 4096
+EXO_buffer_len = 3072			; was 4096
 
 \\ MODE 7
 MODE7_base_addr = &7C00
@@ -94,9 +94,9 @@ DISK1_last_track = 80		; could potentially deduce these from DFS catalog
 DISK2_first_track = 1
 DISK2_last_track = 80		; doesn't actually matter as data stream should indicate end of buffer
 
-STREAM_buffer_size = (3 * DFS_track_size)
+STREAM_buffer_size = (4 * DFS_track_size)
 
-TIMER_latch = ((56 + 128) * 64) - 2				; 56 scanlines for overscan + retrace + 128 scanlines = half way down frame
+TIMER_latch = 20000			; 20ms = 1x vsync :)
 
 \ ******************************************************************
 \ *	Define fast (zero page) runtime variables
@@ -173,16 +173,18 @@ INCLUDE "6502\vgmplayer.h.asm"
 ; by other data between decrunches.
 ; -------------------------------------------------------------------
 decrunch_table = &A00
-;.tabl_bi  SKIP 156
+;.decrunch_table SKIP 156
 tabl_bi = decrunch_table
 tabl_lo = decrunch_table + 52
 tabl_hi = decrunch_table + 104
 
 mus_decrunch_table = &B00
-;.MUS_tabl_bi  SKIP MUS_TABL_SIZE
+;.mus_decrunch_table  SKIP MUS_TABL_SIZE
 MUS_tabl_bi = mus_decrunch_table
 MUS_tabl_lo = MUS_tabl_bi + 52
 MUS_tabl_hi = MUS_tabl_bi + 104
+
+
 
 
 \ ******************************************************************
@@ -318,11 +320,24 @@ ENDIF
 		LDA #LO(irq_handler):STA IRQ1V
 		LDA #HI(irq_handler):STA IRQ1V+1		; set interrupt handler
 
-		LDA #0						; A=00000000
-		STA &FE4B					; R11=Auxillary Control Register (timer 1 one shot mode)
+	;	LDA #0						; A=00000000
+	;	STA &FE4B					; R11=Auxillary Control Register (timer 1 one shot mode)
+		LDA #64						; A=00000000
+		STA &FE4B					; R11=Auxillary Control Register (timer 1 latched mode)
 
 		LDA #&C0					; A=11000000
 		STA &FE4E					; R14=Interrupt Enable (enable timer 1 interrupt)
+
+		LDA #LO(TIMER_latch)
+		STA &FE44					; R4=T1 Low-Order Latches (write)
+		LDA #HI(TIMER_latch)
+		STA &FE45					; R5=T1 High-Order Counter
+		
+		LDA #LO(TIMER_latch)
+		STA &FE46
+		LDA #HI(TIMER_latch)
+		STA &FE47
+	
 		CLI
 	}
 
@@ -338,6 +353,11 @@ ENDIF
 	\\ Wait vsync
 	LDA #19
 	JSR osbyte
+
+;	LDA vsync_count
+;	.wait_for_vsync
+;	CMP vsync_count
+;	BEQ wait_for_vsync
 
 	IF _DEBUG
 	JSR write_debug_info
@@ -810,96 +830,6 @@ ENDIF
 	RTS
 \\}
 
-\ ******************************************************************
-\ *	Event driven main loop
-\ ******************************************************************
-
-IF 0
-.decode_eventv
-{
-	php
-	cmp #4
-	beq vsync
-	JMP not_vsync
-
-	.vsync
-	INC vsync_count
-
-	\\ Preserve registers
-	pha
-
-	\\ If we're already busy just exit function
-	LDA decode_lock
-	BNE early_out
-
-	\\ If we're ahead of video frame rate early out
-	IF _TRY_TO_MATCH_FRAMERATE
-	LDA vsync_count
-	BMI early_out
-	ENDIF
-
-	\\ Set a lock on our decode function
-	INC decode_lock
-	
-	TXA:PHA:TYA:PHA
-
-	\\ Increment frame counter
-	{
-		INC frame_no
-		BNE no_carry
-		INC frame_no+1
-		.no_carry
-	}
-
-	\\ Decode frame header
-	JSR decode_frame_header
-	BCS read_error
-
-	\\ Decode the video frame
-	JSR decode_frame_data
-	BCS read_error
-
-	\\ Indicate our frame rate
-	DEC vsync_count
-	IF _TRY_TO_MATCH_FRAMERATE
-	DEC vsync_count
-	ENDIF
-
-	\\ Release our lock
-	DEC decode_lock
-	BEQ return
-
-	\\ Indicate read error
-	.read_error
-	INC error_flag
-
-	\\ Restore registers
-	.return
-	PLA:TAY:PLA:TAX
-	
-	.early_out
-
-	IF _ENABLE_WALLCLOCK
-	\\ Increment wall clock
-	CLC
-	LDA clock_vsync
-	ADC #1
-	CMP #50
-	BCC no_secs
-	INC clock_secs
-	SBC #50
-	.no_secs
-	STA clock_vsync
-	ENDIF
-
-	pla
-
-	\\ Return
-    .not_vsync
-	plp
-	rts
-}
-ENDIF
 
 \ ******************************************************************
 \ * IRQ
@@ -911,73 +841,24 @@ ENDIF
 	PHA
 
 	\\ Which interrupt?
+
 	LDA &FE4D
-	AND #2
-	BNE is_vsync
+	AND #&40			; timer 1
+	BNE is_timer1
 
-	\\ Timer 1
-	LDA &FE4D
-	AND #&40
-	BEQ return_vsync
-
-	\\ Acknowledge Timer 1
-	STA &FE4D
-
-	\\ Check if we're doing work or not
-	LDA decode_lock
-	BNE return_timer
-
-	\\ Set a lock on our decode function
-	INC decode_lock
-	
-	\\ Increment frame counter
-	{
-		INC frame_no
-		BNE no_carry
-		INC frame_no+1
-		.no_carry
-	}
-
-	\\ Decode frame header
-	TXA:PHA:TYA:PHA
-	JSR decode_frame_header
-
-	\\ Check for error
-	BCS read_error
-
-	\\ Decode the video frame
-	CLI
-	JSR decode_frame_data						; <-- this is the slowest bit!
-	SEI
-
-	.read_error
-	PLA:TAY:PLA:TAX
-	BCC no_read_error
-
-	\\ Indicate error
-	INC error_flag
-	BNE return_timer
-
-	.no_read_error
-	\\ Indicate our frame rate
-	DEC vsync_count
-; Video data runs at 25Hz so take two frames off our sync counter
-;	IF _TRY_TO_MATCH_FRAMERATE
-	DEC vsync_count
-;	ENDIF
-
-	\\ Remove our work lock
-	DEC decode_lock
+;	LDA &FE4D
+;	AND #2
+;	BNE is_vsync
 
 	\\ Pass on to OS IRQ handler
-	.return_timer
-	PLA				
+	.return_to_os
+	PLA
 	STA &FC
 	JMP (old_irqv)		; RTI
 
-	.is_vsync
-	\\ Acknowledge vsync interrupt
-;	STA &FE4D						; if we do this then *FX19 stops working!
+	.is_timer1
+	\\ Acknowledge timer1 interrupt
+	STA &FE4D
 
 	\\ Increment vsync counter
 	INC vsync_count
@@ -997,21 +878,57 @@ ENDIF
 
 	\\ If we're already busy just exit function
 	LDA decode_lock
-	BNE return_vsync
+	BNE return_timer1
 
 	\\ If we're ahead of video frame rate early out
-	IF _TRY_TO_MATCH_FRAMERATE
 	LDA vsync_count
-	BMI return_vsync
-	ENDIF
+	BMI return_timer1
 
-	\\ Set our timer for when to decode frame to minimise tearing
-	LDA #LO(TIMER_latch)
-	STA &FE44					; R4=T1 Low-Order Latches (write)
-	LDA #HI(TIMER_latch)
-	STA &FE45					; R5=T1 High-Order Counter
+	\\ Set a lock on our decode function
+	INC decode_lock
+	
+	\\ Increment frame counter
+	{
+		INC frame_no
+		BNE no_carry
+		INC frame_no+1
+		.no_carry
+	}
 
-	.return_vsync
+	\\ Store registers in case of interupts
+	TXA:PHA:TYA:PHA
+
+	\\ Decode frame header
+	JSR decode_frame_header
+
+	\\ Check for error
+	BCS read_error
+
+	\\ Decode the video frame
+	CLI
+	JSR decode_frame_data						; <-- this is the slowest bit!
+	SEI
+
+	.read_error
+	BCC no_read_error
+
+	\\ Indicate error
+	INC error_flag
+
+	.no_read_error
+	\\ Restore registers
+	PLA:TAY:PLA:TAX
+
+	\\ Video data runs at 25Hz so take two frames off our sync counter
+
+	DEC vsync_count
+	DEC vsync_count
+
+	\\ Remove our work lock
+	DEC decode_lock
+
+	.return_timer1
+
 	\\ Exit
 	PLA
 	STA &FC

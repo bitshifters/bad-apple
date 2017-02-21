@@ -22,5 +22,4 @@ VGM_PLAYER_sample_rate = 50			; locked to 50Hz
 
 \\ Player vars
 .vgm_player_ended			SKIP 1		; non-zero when player has reached end of tune
-.vgm_player_data			SKIP 1		; temporary variable when decoding sound data - must be separate as player running on events
-.vgm_player_counter			SKIP 2		; increments by 1 every poll (20ms) - used as our tracker line no. & to sync fx with audio update
+.vgm_player_lock			SKIP 1		; stop music player being re-entered

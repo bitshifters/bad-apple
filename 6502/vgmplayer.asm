@@ -206,12 +206,9 @@ EQUB &01, &02, &04, &08, &10, &20, &40, &80
 	.done_author_padding
 
 	\\ Initialise vars
-	LDA #&FF
-	STA vgm_player_counter
-	STA vgm_player_counter+1
-
 	LDA #0
 	STA vgm_player_ended
+	STA vgm_player_lock
 
 	\\ Return zero 
 	RTS
@@ -238,8 +235,21 @@ EQUB &01, &02, &04, &08, &10, &20, &40, &80
 {
 	\\ Assume this is called every 20ms..
 
+	\\ Are we already playing (some bad timer thing happened)
+
+	LDA vgm_player_lock
+	BNE return				; just return right away
+
+	\\ We already finished?
+
 	LDA vgm_player_ended
-	BNE _sample_end
+	BNE return
+
+	\\ Stop routine re-entering
+
+	INC vgm_player_lock
+
+	TXA:PHA:TYA:PHA
 
 \\ <packets section>
 \\  [byte] - indicating number of data writes within the current packet (max 11)
@@ -252,7 +262,7 @@ EQUB &01, &02, &04, &08, &10, &20, &40, &80
 
 	\\ Get next byte from the stream
 	jsr MUS_get_decrunched_byte
-	bcs _sample_end
+	bcs _player_end
 
 	cmp #&ff
 	beq _player_end
@@ -265,34 +275,26 @@ EQUB &01, &02, &04, &08, &10, &20, &40, &80
 	jsr MUS_get_decrunched_byte
 	bcc not_sample_end
 	PLA
-	JMP _sample_end
+	JMP _player_end
 
 	.not_sample_end
 	JSR psg_strobe
 	PLA:TAY:DEY
 	JMP sound_data_loop
 	
-	.wait_20_ms
-	INC vgm_player_counter				; indicate we have completed another frame of audio
-	BNE no_carry
-	INC vgm_player_counter+1
-	.no_carry
-
-	CLC
-	RTS
-
 	._player_end
+	LDA #1
 	STA vgm_player_ended
 
 	\\ Silence sound chip
 	JSR deinit_player
 
-	INC vgm_player_counter				; indicate we have completed one last frame of audio
-	BNE _sample_end
-	INC vgm_player_counter+1
+	.wait_20_ms
+	DEC vgm_player_lock
 
-	._sample_end
-	SEC
+	PLA:TAY:PLA:TAX
+
+	.return
 	RTS
 }
 
