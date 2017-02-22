@@ -49,6 +49,9 @@ _MUSIC_START_DELAY = 20
 
 _MUS_BUFFER_2K = TRUE		; enable this to use the 'final' version of the music
 
+
+_SHOW_INTRO = TRUE
+
 \ ******************************************************************
 \ *	Define macros
 \ ******************************************************************
@@ -225,7 +228,14 @@ ENDIF
 	\\ Set MODE 7
 	LDA #22: JSR oswrch
 	LDA #7: JSR oswrch
-
+IF TRUE
+	\\ Turn off cursor by directly poking crtc
+	\\ saves a few bytes this way. might not even need SEI/CLI
+	SEI
+	LDA #10: STA &FE00
+	LDA #32: STA &FE01
+	CLI	
+ELSE
 	\\ Must be a simpler way to turn off cursor than this!!
 	LDA #23: JSR oswrch
 	LDA #1: JSR oswrch
@@ -237,6 +247,14 @@ ENDIF
 	JSR oswrch
 	JSR oswrch
 	JSR oswrch
+ENDIF
+
+
+IF _SHOW_INTRO
+	; show the intro sequence
+	jsr introz
+ENDIF
+
 
 	\\ Set gfx mode
 	LDX #0
@@ -557,9 +575,9 @@ IF _DEBUG
 .write_debug_info
 {
 	\\ Reset our write ptr
-	LDA #LO(MODE7_base_addr)
+	LDA #LO(MODE7_base_addr+40)
 	STA debugptr
-	LDA #HI(MODE7_base_addr)
+	LDA #HI(MODE7_base_addr+40)
 	STA debugptr+1
 
 	\\ Write debug info to screen
@@ -1517,6 +1535,72 @@ ENDIF
 INCLUDE "6502\exomiser.asm"
 INCLUDE "6502\vgmplayer.asm"
 
+\ ******************************************************************
+\ *	INTRO SEQUENCE
+\ ******************************************************************
+
+IF _SHOW_INTRO
+; X/Y contain page to show
+; A contains time to show it (centi-seconds)
+.show_page
+{
+	PHA:TXA:PHA:TYA:PHA
+	
+	LDA #19:LDX #0:JSR osbyte
+	LDA #6:STA &FE00:LDA #0:STA &FE01
+
+	\\ Initialize compressed data stream
+	\\ the title screen is an included binary at the VGM_stream_data memory address
+	\\ (later overwritten by loaded VGMs)
+	PLA:TAY:PLA:TAX
+	JSR MUS_init_decruncher
+	
+	\\ unpack to screen
+	LDX #&00
+	LDY #&7c
+	JSR MUS_unpack
+
+	LDA #19:LDX #0:JSR osbyte
+	LDA #6:STA &FE00:LDA #25:STA &FE01	
+	
+	\\ wait for keypress within time A
+    PLA:TAX:LDY#0:LDA#&81:JSR osbyte	
+	rts
+}
+
+.introz
+{
+	LDX #LO(page_testcard)
+	LDY #HI(page_testcard)
+	LDA #200
+	JSR show_page
+
+	LDX #LO(page_bitshifters)
+	LDY #HI(page_bitshifters)
+	LDA #200
+	JSR show_page
+
+	LDX #LO(page_badapple)
+	LDY #HI(page_badapple)
+	LDA #200
+	JSR show_page	
+
+	LDX #LO(page_blockparty)
+	LDY #HI(page_blockparty)
+	LDA #200
+	JSR show_page
+
+	LDX #LO(page_frame)
+	LDY #HI(page_frame)
+	LDA #0
+	JSR show_page
+
+
+
+	rts
+}
+ENDIF
+
 .code_end
 
 \ ******************************************************************
@@ -1537,6 +1621,39 @@ ELSE
 	INCBIN "data/bbcapple-doesthiscompressbetter.bin.exo"
 ENDIF
 
+
+
+
+
+
+
+\\ Exomiser unpack buffer (must be page aligned)
+\\ SM: moved into EXE block, so we can utilize it for storing intro data prior to the video playing back.
+\\ (when the data in here will get overwritten)
+ALIGN &100
+.EXO_buffer_start
+; We have 3Kb to play with. Let's cram it in!
+
+.page_testcard
+INCBIN "data/testcard.txt.bin.exo"
+.page_bitshifters
+INCBIN "data/bitshifters.txt.bin.exo"
+.page_blockparty
+INCBIN "data/blockparty.txt.bin.exo"
+.page_badapple
+INCBIN "data/badapple.txt.bin.exo"
+.page_frame
+INCBIN "data/frame.txt.bin.exo"
+
+WORKSPACE_FREE = EXO_buffer_len-(*-EXO_buffer_start)
+
+SKIP WORKSPACE_FREE
+
+
+.EXO_buffer_end
+
+
+
 \ ******************************************************************
 \ *	End address to be saved
 \ ******************************************************************
@@ -1551,11 +1668,7 @@ ALIGN 256	; pad to nearest page to ensure exe fills a complete sector
 \ *	Space reserved for runtime buffers not preinitialised
 \ ******************************************************************
 
-\\ Exomiser unpack buffer (must be page aligned)
-ALIGN &100
-.EXO_buffer_start
-SKIP EXO_buffer_len
-.EXO_buffer_end
+
 
 IF _MUS_BUFFER_2K
 \\ Exomiser music unpack buffer
@@ -1583,6 +1696,7 @@ PRINT "Streaming buffer size =", STREAM_buffer_end-STREAM_buffer_start, " (", ~(
 PRINT "TOP =", ~*
 PRINT "GUARD = &7C00"
 PRINT "RAM Bytes free =", &7C00-P%
+PRINT " Free Workspace:", WORKSPACE_FREE, " bytes"
 
 \ ******************************************************************
 \ *	Save the code
@@ -1593,4 +1707,4 @@ EXE_SIZE = end-start
 PADDING_SIZE = ((DISK1_first_track*DFS_track_size)-512)-EXE_SIZE
 PRINT "EXE Size is ", ~EXE_SIZE, "bytes"
 PRINT "Padding to track", DISK1_first_track, "is ", ~PADDING_SIZE, "bytes"
-SAVE "btshftr", start, start+PADDING_SIZE, 0, 0
+SAVE "b.tshftrs", start, start+PADDING_SIZE, 0, 0
