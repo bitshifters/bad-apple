@@ -1585,6 +1585,11 @@ IF _SHOW_INTRO
 	LDA #200
 	JSR show_page	
 
+	LDX #LO(page_ip)
+	LDY #HI(page_ip)
+	LDA #200
+	JSR show_page	
+
 	LDX #LO(page_blockparty)
 	LDY #HI(page_blockparty)
 	LDA #200
@@ -1635,15 +1640,18 @@ ALIGN &100
 ; We have 3Kb to play with. Let's cram it in!
 
 .page_testcard
-INCBIN "data/testcard.txt.bin.exo"
+INCBIN "data/pages/testcard.txt.bin.exo"
 .page_bitshifters
-INCBIN "data/bitshifters.txt.bin.exo"
+INCBIN "data/pages/bitshifters.txt.bin.exo"
 .page_blockparty
-INCBIN "data/blockparty.txt.bin.exo"
+INCBIN "data/pages/blockparty.txt.bin.exo"
 .page_badapple
-INCBIN "data/badapple.txt.bin.exo"
+INCBIN "data/pages/badapple.txt.bin.exo"
 .page_frame
-INCBIN "data/frame.txt.bin.exo"
+INCBIN "data/pages/frame.txt.bin.exo"
+.page_ip
+INCBIN "data/pages/inversephase.txt.bin.exo"
+
 
 WORKSPACE_FREE = EXO_buffer_len-(*-EXO_buffer_start)
 
