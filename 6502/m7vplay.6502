@@ -52,6 +52,8 @@ _MUS_BUFFER_2K = TRUE		; enable this to use the 'final' version of the music
 
 _SHOW_INTRO = TRUE
 
+_SHOW_VIDEO_DEBUG = FALSE	; show the debug video data stuff, turn this OFF for final release
+
 \ ******************************************************************
 \ *	Define macros
 \ ******************************************************************
@@ -574,6 +576,7 @@ ENDIF
 IF _DEBUG
 .write_debug_info
 {
+IF _SHOW_VIDEO_DEBUG
 	\\ Reset our write ptr
 	LDA #LO(MODE7_base_addr+40)
 	STA debugptr
@@ -581,13 +584,9 @@ IF _DEBUG
 	STA debugptr+1
 
 	\\ Write debug info to screen
-	LDY #0
-	LDA frame_no+1
-	JSR debug_write_hex
-	LDA frame_no
-	JSR debug_write_hex
 
-	INY
+
+	LDY #0
 	LDA EXO_crunch_byte_hi
 	JSR debug_write_hex
 	LDA EXO_crunch_byte_lo
@@ -622,9 +621,24 @@ IF _DEBUG
 	INY
 	LDA vsync_count
 	JSR debug_write_hex
+ENDIF
+
+	\\ write some debug info to the teletext header
+	\\ Reset our write ptr
+	LDA #LO(MODE7_base_addr)
+	STA debugptr
+	LDA #HI(MODE7_base_addr)
+	STA debugptr+1
+
+
+	LDY #20
+	LDA frame_no+1
+	JSR debug_write_hex
+	LDA frame_no
+	JSR debug_write_hex
 
 	IF _ENABLE_WALLCLOCK
-	INY
+	LDY #36
 	LDA clock_secs
 	JSR debug_write_time
 	ENDIF
@@ -1575,6 +1589,16 @@ IF _SHOW_INTRO
 	LDA #200
 	JSR show_page
 
+	LDX #LO(page_title)
+	LDY #HI(page_title)
+	LDA #200
+	JSR show_page	
+
+	LDX #LO(page_blockparty)
+	LDY #HI(page_blockparty)
+	LDA #200
+	JSR show_page
+
 	LDX #LO(page_bitshifters)
 	LDY #HI(page_bitshifters)
 	LDA #200
@@ -1590,10 +1614,11 @@ IF _SHOW_INTRO
 	LDA #200
 	JSR show_page	
 
-	LDX #LO(page_blockparty)
-	LDY #HI(page_blockparty)
+	LDX #LO(page_horsenburger)
+	LDY #HI(page_horsenburger)
 	LDA #200
 	JSR show_page
+
 
 	LDX #LO(page_frame)
 	LDY #HI(page_frame)
@@ -1641,6 +1666,8 @@ ALIGN &100
 
 .page_testcard
 INCBIN "data/pages/testcard.txt.bin.exo"
+.page_title
+INCBIN "data/pages/title.txt.bin.exo"
 .page_bitshifters
 INCBIN "data/pages/bitshifters.txt.bin.exo"
 .page_blockparty
@@ -1651,6 +1678,8 @@ INCBIN "data/pages/badapple.txt.bin.exo"
 INCBIN "data/pages/frame.txt.bin.exo"
 .page_ip
 INCBIN "data/pages/inversephase.txt.bin.exo"
+.page_horsenburger
+INCBIN "data/pages/horsenburger.txt.bin.exo"
 
 
 WORKSPACE_FREE = EXO_buffer_len-(*-EXO_buffer_start)
