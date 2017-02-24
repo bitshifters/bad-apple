@@ -54,7 +54,7 @@ _SHOW_INTRO = TRUE	; probably not needed as a define anymore.
 
 _SHOW_VIDEO_DEBUG = FALSE	; show the debug video data stuff, turn this OFF for final release
 
-_HACK_CREDITS = TRUE ; force credits to show in intro (for testing)
+_HACK_CREDITS = FALSE ; force credits to show in intro (for testing)
 
 
 \ ******************************************************************

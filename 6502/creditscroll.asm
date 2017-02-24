@@ -8,9 +8,9 @@
 .start_fx_creditscroll
 
 \\ Change these to adjust window that is scrolled
-CREDITS_shadow_addr = &7C00 + 4*40
-CREDITS_end_addr = CREDITS_shadow_addr + (MODE7_char_width * MODE7_char_height) - 5*40
-CREDITS_first_char = 4
+CREDITS_shadow_addr = &7C00 + 4*40	; offset by first 4 rows (where logo+header are)
+CREDITS_end_addr = CREDITS_shadow_addr + (MODE7_char_width * MODE7_char_height) - 5*40 ; less 1 line which is where test card line is
+CREDITS_first_char = 1
 CREDITS_last_char = MODE7_char_width
 
 ROW_DELAY = 15	; speed of line updates in vsyncs, set to 0 for no delay
@@ -509,84 +509,78 @@ SET_TELETEXT_FONT_CHAR_MAP
 \\ New font is 3 chars wide = max 13 letters per line from 1
 
 .fx_creditscroll_text
-;       0123456789ab
-EQUS 1,"Test 1",0
-EQUS 2,"Test 2",0
-EQUS 3,"Test 3",0
-EQUS 4,"Test 4",0
-EQUS 5,"Test 5",0
-
-EQUS 4,"Bad Apple",0
-EQUS 4,"Teletext",0
-EQUS 4," ",0
-EQUS 4,"A",0
-EQUS 4,"Bitshifters",0
-EQUS 4,"Production",0
-EQUS 4," ",0
-EQUS 4,"Code By",0
-EQUS 4,"Kieran and",0
-EQUS 4,"simondotm",0
-EQUS 4," ",0
-EQUS 4," ",0
-EQUS 4,"Music by",0
-EQUS 4,"Inverse Phase",0
-EQUS 4," ",0
-EQUS 4,"Art by",0
-EQUS 4,"Horsenburger",0
-EQUS 4," ",0
-EQUS 4," ",0
-EQUS 4,"Released at",0
-EQUS 4,"Block Party",0
-EQUS 4,"Cambridge",0
-EQUS 4,"25 Feb 2017",0
-EQUS 4," ",0
-EQUS 4,"Greetz from",0
-EQUS 4,"Kieran to...",0
-EQUS 4," ",0
-EQUS 4,"Raquel Meyers",0
-EQUS 4,"Steve Horsley",0
-EQUS 4,"Dan Farrimond",0
-EQUS 4,"Simon Rawles",0
-EQUS 4,"Peter KVT80",0
-EQUS 4," ",0
-EQUS 4,"Greetz from",0
-EQUS 4,"Inverse Phase",0
-EQUS 4,"to...",0
-EQUS 4," ",0
-EQUS 4,"",0
-EQUS 4,"3LN",0
-EQUS 4,"4mat",0
-EQUS 4,"bitshifter",0
-EQUS 4,"bitshifters",0
-EQUS 4,"blargg",0
-EQUS 4,"cmucc",0
-EQUS 4,"crtc",0
-EQUS 4,"ctrix",0
-EQUS 4,"delek",0
-EQUS 4,"gemini",0
-EQUS 4,"goto80",0
-EQUS 4,"haujobb",0
-EQUS 4,"nesdev",0
-EQUS 4,"pwp",0
-EQUS 4,"siren",0
-EQUS 4,"trixter",0
-EQUS 4,"ubulab",0
-EQUS 4,"virt",0
-EQUS 4,"vogue",0
-EQUS 4,"mr. h",0
-EQUS 4,"",0
-EQUS 4,"",0
-EQUS 4,"",0
-EQUS 4,"",0
-EQUS 4,"Thankyou for",0
-EQUS 4,"Watching!",0
-EQUS 4," ",0
-EQUS 4,"",0
-EQUS 4,"",0
-EQUS 4,"",0
-EQUS 4,"",0
-EQUS 4,"",0
-EQUS 4,"",0
+;       0123456789abc
+EQUS 1,"Bad Apple",0
+EQUS 1,"Teletext",0
+EQUS 1," ",0
+EQUS 1,"A",0
+EQUS 1,"Bitshifters",0
+EQUS 1,"Production",0
+EQUS 1," ",0
+EQUS 1,"Code By",0
+EQUS 1,"Kieran and",0
+EQUS 1,"simondotm",0
+EQUS 1," ",0
+EQUS 1," ",0
+EQUS 1,"Music by",0
+EQUS 1,"Inverse Phase",0
+EQUS 1," ",0
+EQUS 1,"Art by",0
+EQUS 1,"Horsenburger",0
+EQUS 1," ",0
+EQUS 1," ",0
+EQUS 1,"Released at",0
+EQUS 1,"Block Party",0
+EQUS 1,"Cambridge",0
+EQUS 1,"25 Feb 2017",0
+EQUS 1," ",0
+EQUS 1,"Greetz from",0
+EQUS 1,"Kieran to...",0
+EQUS 1," ",0
+EQUS 1,"Raquel Meyers",0
+EQUS 1,"Steve Horsley",0
+EQUS 1,"Dan Farrimond",0
+EQUS 1,"Simon Rawles",0
+EQUS 1,"Peter KVT80",0
+EQUS 1," ",0
+EQUS 1,"Greetz from",0
+EQUS 1,"Inverse Phase",0
+EQUS 1,"to...",0
+EQUS 1," ",0
+EQUS 1,"",0
+EQUS 1,"3LN",0
+EQUS 1,"4mat",0
+EQUS 1,"bitshifter",0
+EQUS 1,"bitshifters",0
+EQUS 1,"blargg",0
+EQUS 1,"cmucc",0
+EQUS 1,"crtc",0
+EQUS 1,"ctrix",0
+EQUS 1,"delek",0
+EQUS 1,"gemini",0
+EQUS 1,"goto80",0
+EQUS 1,"haujobb",0
+EQUS 1,"nesdev",0
+EQUS 1,"pwp",0
+EQUS 1,"siren",0
+EQUS 1,"trixter",0
+EQUS 1,"ubulab",0
+EQUS 1,"virt",0
+EQUS 1,"vogue",0
+EQUS 1,"mr. h",0
+EQUS 1,"",0
+EQUS 1,"",0
+EQUS 1,"",0
+EQUS 1,"",0
+EQUS 1,"Thankyou for",0
+EQUS 1,"Watching!",0
+EQUS 1," ",0
+EQUS 1,"",0
+EQUS 1,"",0
+EQUS 1,"",0
+EQUS 1,"",0
+EQUS 1,"",0
+EQUS 1,"",0
 EQUS &FF
 .fx_creditscroll_text_end
 
