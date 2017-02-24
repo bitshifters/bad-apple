@@ -237,7 +237,6 @@ ENDIF
 	LDX #3
 	JSR osbyte	
 
-
 	\\ Set MODE 7
 	LDA #22: JSR oswrch
 	LDA #7: JSR oswrch
@@ -1791,8 +1790,11 @@ ENDIF
 	rts
 }
 
+.os_load_credits_music EQUS "LOAD credits", 13
 .creditz
 {
+
+
 ;--------- CREDITS -----------------
 
 	jsr fx_creditscroll_init
@@ -1802,17 +1804,43 @@ ENDIF
 	LDA #6:STA &FE00:LDA #0:STA &FE01
 	LDA #1:JSR wait_key
 
+
 	LDX #LO(CREDITS_DATA_PAGE)
 	LDY #HI(CREDITS_DATA_PAGE)
 	JSR show_page
 
+	; start music
+	; must happen after we unpack the credits page
+	; since the music player uses the same exo decompressor
+	; as the page data unpacker
+
+	; *load the credits music to the streaming buffer
+	; workspace which isnt in use at the moment!
+	; can only just fit it on the disk let alone in ram as well
+	ldx #LO(os_load_credits_music)
+	ldy #HI(os_load_credits_music)
+	jsr &fff7	; oscli
+
+	; kick off the music player
+	LDX #LO(credits_music_start)
+	LDY #HI(credits_music_start)
+	JSR vgm_init_stream
+
+	LDX #LO(poll_player)
+	LDY #HI(poll_player)
+	JSR start_eventv
+
+
 .creditsloop
 	lda #19:ldx #0:jsr osbyte
 	jsr fx_creditscroll_update
+	; loop until all credits are shown
 	beq creditsloop
 
 ;--------------------------------------
 	
+	; cleanup of the music player
+	jsr stop_eventv
 	rts
 }
 
@@ -1975,7 +2003,21 @@ ENDIF
 
 ALIGN &100
 .STREAM_buffer_start
-SKIP STREAM_buffer_size
+
+; ok bit of a cheeky re-use of RAM here
+; during assembly we reserve this memory buffer
+; but it is not saved as part of the code segment
+; so we incbin the credits music file here
+; and save it to disk further below (same load address)
+; so it can be loaded back into RAM when the credits sequence begins
+.credits_music_start
+INCBIN "data/bbcacred.bin.exo"
+; round up to a page in length (makes track alignment math easier)
+ALIGN 256
+.credits_music_end
+
+; ensure we reserve further bytes to make buffer STREAM_buffer_size
+SKIP STREAM_buffer_size-(*-STREAM_buffer_start)
 .STREAM_buffer_end
 
 TEMP_BUFFER = STREAM_buffer_start
@@ -1997,7 +2039,17 @@ PRINT " Free Workspace:", WORKSPACE_FREE, " bytes"
 
 SAVE "!boot", start, end
 EXE_SIZE = end-start
-PADDING_SIZE = ((DISK1_first_track*DFS_track_size)-512)-EXE_SIZE
+CREDITS_MUSIC_SIZE = credits_music_end-credits_music_start
+
+PADDING_SIZE = ((DISK1_first_track*DFS_track_size)-512)-EXE_SIZE-CREDITS_MUSIC_SIZE
+
 PRINT "EXE Size is ", ~EXE_SIZE, "bytes"
+
+; write the credits music to the disk. Just enough space!
+PRINT "Credits music Size is ", ~CREDITS_MUSIC_SIZE, "bytes"
+SAVE "credits", credits_music_start, credits_music_end, credits_music_start, credits_music_start
+
+; write a padding file to disk to ensure we get the video on the right track number
 PRINT "Padding to track", DISK1_first_track, "is ", ~PADDING_SIZE, "bytes"
 SAVE "b.tshftrs", start, start+PADDING_SIZE, 0, 0
+
