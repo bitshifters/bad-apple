@@ -46,33 +46,36 @@ ROW_DELAY = 0 ;15	; speed of line updates in vsyncs, set to 0 for no delay
 	.x_loop
 
 	\\ Get top pixels from row below
-	LDA (readptr), Y
-	AND #&3
-	STA top_bits + 1
+	LDA (readptr), Y		; [5*]
+	TAX						; [2]
+	AND #&3					; [2]
+	STA top_bits + 1		; [4]
 
 	\\ Get bottom pixels from current row
-	LDA (writeptr), Y
-	AND #&FC
+	LDA (writeptr), Y		; [5*]
+	AND #&FC				; [2]
 
 	\\ Merge them together
 	.top_bits
-	ORA #0
+	ORA #0					; [2]
 
 	\\ Always add 32
-	ORA #32
+	ORA #32					; [2]
 
 	\\ Rotate the pixels to scroll up
-	TAX
-	LDA fx_creditscroll_rotate, X
+	TAX						; [2]
+	LDA fx_creditscroll_rotate, X	; [4*]
 
 	\\ Write the byte back to the screen
-	STA (writeptr), Y
+	STA (writeptr), Y		; [5*]
 
 	\\ Full width
 	.skip
-	INY
-	CPY #CREDITS_last_char
-	BCC x_loop
+	INY						; [2]
+	CPY #CREDITS_last_char	; [2]
+	BCC x_loop				; [2*]
+
+	; 41 cycles per char
 
 	\\ Move down a row
 
@@ -415,6 +418,40 @@ EQUB 0
 }
 
 fx_creditscroll_rotate = fx_creditscroll_rotate_table-32
+
+
+
+IF 0
+; table to shift 3x2 teletext graphic up by 1 pixel row 
+.glyph_shift_table_1
+{
+	FOR n, 32, 127, 1	; teletext codes range from 32-127
+		a = n AND 1
+		b = (n AND 2)/2
+		c = (n AND 4)/4
+		d = (n AND 8)/8
+		e = (n AND 16)/16
+		f = (n AND 64)/64
+
+		EQUB 32 + (c*1) + (d*2) + (e*4) + (f*8)
+	NEXT
+}
+; table to translate top 2 teletext pixels to bottom 2
+.glyph_shift_table_2
+{
+	FOR n, 32, 127, 1	; teletext codes range from 32-127
+		a = n AND 1
+		b = (n AND 2)/2
+		c = (n AND 4)/4
+		d = (n AND 8)/8
+		e = (n AND 16)/16
+		f = (n AND 64)/64
+
+		EQUB (a*16) + (b*64)
+	NEXT
+}
+ENDIF
+
 
 
 \\ Spare character row which will get added to bottom of scroll
