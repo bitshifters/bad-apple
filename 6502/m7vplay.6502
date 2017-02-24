@@ -136,6 +136,7 @@ GUARD &9F
 
 \\ System vars
 .writeptr				SKIP 2
+.tempptr				SKIP 2
 
 .num_deltas				SKIP 2
 .packed_delta			SKIP 2
@@ -147,6 +148,7 @@ GUARD &9F
 .track_no				SKIP 1
 .load_to_HI				SKIP 1
 .xpos					SKIP 1
+
 
 IF _ENABLE_WALLCLOCK
 .clock_vsync			SKIP 1
@@ -1554,6 +1556,126 @@ INCLUDE "6502\vgmplayer.asm"
 \ ******************************************************************
 
 IF _SHOW_INTRO
+
+; X/Y contain page to show
+; A contains time to show it (centi-seconds)
+.scroll_page
+{
+	PHA
+	JSR MUS_init_decruncher
+	
+	\\ unpack to screen
+	LDX #LO(TEMP_BUFFER)
+	LDY #HI(TEMP_BUFFER)
+	JSR MUS_unpack
+
+	lda #LO(TEMP_BUFFER)
+	sta debugptr+0
+	lda #HI(TEMP_BUFFER)
+	sta debugptr+1
+
+
+	ldy #24
+.main_loop
+	tya:pha
+
+	LDA #19:LDX #0:JSR osbyte 
+
+
+
+
+IF TRUE
+; hacking rapid inline code here for speed - to beat raster & keep 50Hz
+	for i,0,23
+
+		ldx #39
+	.col_loop
+		lda &7c00+40+i*40,x
+		sta &7c00+i*40,x
+		dex
+		bpl col_loop
+
+	next
+
+ELSE
+
+	; slower version
+	lda #40
+	sta readaddr+1
+	lda #&7c
+	sta readaddr+2 
+
+	lda #0
+	sta writeaddr+1
+	lda #&7c
+	sta writeaddr+2 	
+
+	ldy #24
+.row_loop
+	tya:pha
+	ldx #39
+.col_loop
+.readaddr
+	lda &ffff,x
+.writeaddr
+	sta &ffff,x
+	dex
+	bpl col_loop
+
+	lda readaddr+1
+	clc
+	adc #40
+	sta readaddr+1
+	lda readaddr+2
+	adc #0
+	sta readaddr+2
+
+	lda writeaddr+1
+	clc
+	adc #40
+	sta writeaddr+1
+	lda writeaddr+2
+	adc #0
+	sta writeaddr+2
+
+
+	pla:tay
+	dey
+	bpl row_loop
+ENDIF
+
+
+	ldy #39
+.bot_loop
+	lda (debugptr),y
+	sta &7c00+24*40,y
+	dey
+	bpl bot_loop
+
+	lda debugptr+0
+	clc
+	adc #40
+	sta debugptr+0
+	lda debugptr+1
+	adc #0
+	sta debugptr+1
+
+
+	pla:tay
+	dey
+	;bpl main_loop
+	bmi finished
+	jmp main_loop
+.finished
+
+
+	\\ wait for keypress within time A
+    PLA:TAX:LDY#0:LDA#&81:JSR osbyte
+	rts
+}
+
+
+
 ; X/Y contain page to show
 ; A contains time to show it (centi-seconds)
 .show_page
@@ -1571,8 +1693,9 @@ IF _SHOW_INTRO
 	
 	\\ unpack to screen
 	LDX #&00
-	LDY #&7c
+	LDY #&7C
 	JSR MUS_unpack
+
 
 	LDA #19:LDX #0:JSR osbyte
 	LDA #6:STA &FE00:LDA #25:STA &FE01	
@@ -1584,6 +1707,7 @@ IF _SHOW_INTRO
 
 .introz
 {
+	.again
 	LDX #LO(page_testcard)
 	LDY #HI(page_testcard)
 	LDA #200
@@ -1597,27 +1721,27 @@ IF _SHOW_INTRO
 	LDX #LO(page_blockparty)
 	LDY #HI(page_blockparty)
 	LDA #200
-	JSR show_page
+	JSR scroll_page
 
 	LDX #LO(page_bitshifters)
 	LDY #HI(page_bitshifters)
 	LDA #200
-	JSR show_page
+	JSR scroll_page
 
 	LDX #LO(page_badapple)
 	LDY #HI(page_badapple)
 	LDA #200
-	JSR show_page	
+	JSR scroll_page	
 
 	LDX #LO(page_ip)
 	LDY #HI(page_ip)
 	LDA #200
-	JSR show_page	
+	JSR scroll_page	
 
 	LDX #LO(page_horsenburger)
 	LDY #HI(page_horsenburger)
 	LDA #200
-	JSR show_page
+	JSR scroll_page
 
 
 	LDX #LO(page_frame)
@@ -1625,7 +1749,7 @@ IF _SHOW_INTRO
 	LDA #0
 	JSR show_page
 
-
+;	jmp again
 
 	rts
 }
@@ -1642,9 +1766,12 @@ IF _MUS_BUFFER_2K
 	; 'Final' version of music compressed using:
 	;  exomizer.exe raw -c -m 2048 <file.raw> -o <file.exo>
 	INCBIN "data/bbcapple.bin.exo"
-	; gotta pad this out to same size as music below so that track alignment is good
-	; TODO: a better fix is to sort the disk image packing
-	SKIP (music_data+12095)-*
+; This fix is now in place, so no need for SKIP and frees up a bit of RAM
+	IF FALSE	
+		; gotta pad this out to same size as music below so that track alignment is good
+		; TODO: a better fix is to sort the disk image packing
+		SKIP (music_data+12095)-*
+	ENDIF
 ELSE
 	; 'Party' version of music compressed using:
 	;  exomizer.exe raw -c -m 1024 <file.raw> -o <file.exo>
@@ -1724,6 +1851,9 @@ ALIGN &100
 .STREAM_buffer_start
 SKIP STREAM_buffer_size
 .STREAM_buffer_end
+
+TEMP_BUFFER = STREAM_buffer_start
+
 
 PRINT "Code size =", code_end-start, " (", ~(code_end-start), ") bytes."
 PRINT "Music size =", end-music_data, " (", ~(end-music_data), ") bytes."
