@@ -8,12 +8,12 @@
 .start_fx_creditscroll
 
 \\ Change these to adjust window that is scrolled
-CREDITS_shadow_addr = &7C00 + 4*40	; offset by first 4 rows (where logo+header are)
-CREDITS_end_addr = CREDITS_shadow_addr + (MODE7_char_width * MODE7_char_height) - 5*40 ; less 1 line which is where test card line is
+CREDITS_shadow_addr = &7C00 + 5*40	; offset by first 4 rows (where logo+header are)
+CREDITS_end_addr = CREDITS_shadow_addr + (MODE7_char_width * MODE7_char_height) - 7*40 ; less 2 lines at the bottom which is where test card line is
 CREDITS_first_char = 1
 CREDITS_last_char = MODE7_char_width
 
-ROW_DELAY = 0 ;15	; speed of line updates in vsyncs, set to 0 for no delay
+ROW_DELAY = 15	; speed of line updates in vsyncs, set to 0 for no delay
 
 .line_counter EQUB 0
 
@@ -69,28 +69,24 @@ IF FAST_SCROLL
 .x_loop
 
 .readaddr
-	LDA &ffff, Y			; [4*]
-	TAX						; [2]
+	LDX &ffff, Y			; [4*]
 	LDA glyph_shift_table_1-32,X	; [4*]
 	STA top_bits+1			; [4]
 .writeaddr1
-	LDA &ffff, Y			; [4*]
-	TAX						; [2]
+	LDX &ffff, Y			; [4*]
 	LDA glyph_shift_table_2-32,X	; [4*]
 	.top_bits
 	ORA #0					; [2]
-
 	\\ Write the byte back to the screen
 .writeaddr2
 	STA &ffff, Y		; [4*]
-
 	\\ Full width
 	.skip
 	INY						; [2]
 	CPY #CREDITS_last_char	; [2]
 	BCC x_loop				; [2*]
 
-; 36 cycles
+; 32 cycles
 ELSE
 	\\ First char in row
 	LDY #CREDITS_first_char
@@ -233,11 +229,14 @@ ENDIF
 ;	lda #144+7
 ;	jsr mode7_set_graphics_shadow_fast			; can remove this if other routine handling colours	
 
-	\\ Scroll everything up
-	JSR fx_creditscroll_scroll_up
+
 
 	\\ Write new line of text to array
 	JSR fx_creditscroll_write_text_line
+
+	\\ Scroll everything up
+	JSR fx_creditscroll_scroll_up
+
 
 
 	.return
@@ -606,79 +605,125 @@ SET_TELETEXT_FONT_CHAR_MAP
 
 \\ New font is 3 chars wide = max 13 letters per line from 1
 
+; centering offsets
+; 1=19 2=17 3=16 4=14 5=13 6=11 7=10 8=8 9=7 a=5 b=4 c=2 d=1
 .fx_creditscroll_text
-;       0123456789abc
-EQUS 1,"Bad Apple",0
-EQUS 1,"Teletext",0
-EQUS 1," ",0
-EQUS 1,"A",0
-EQUS 1,"Bitshifters",0
-EQUS 1,"Production",0
-EQUS 1," ",0
-EQUS 1,"Code By",0
-EQUS 1,"Kieran and",0
-EQUS 1,"simondotm",0
-EQUS 1," ",0
-EQUS 1," ",0
-EQUS 1,"Music by",0
-EQUS 1,"Inverse Phase",0
-EQUS 1," ",0
-EQUS 1,"Art by",0
-EQUS 1,"Horsenburger",0
-EQUS 1," ",0
-EQUS 1," ",0
-EQUS 1,"Released at",0
-EQUS 1,"Block Party",0
-EQUS 1,"Cambridge",0
-EQUS 1,"25 Feb 2017",0
-EQUS 1," ",0
-EQUS 1,"Greetz from",0
-EQUS 1,"Kieran to...",0
-EQUS 1," ",0
-EQUS 1,"Raquel Meyers",0
-EQUS 1,"Steve Horsley",0
-EQUS 1,"Dan Farrimond",0
-EQUS 1,"Simon Rawles",0
-EQUS 1,"Peter KVT80",0
-EQUS 1," ",0
-EQUS 1,"Greetz from",0
-EQUS 1,"Inverse Phase",0
-EQUS 1,"to...",0
-EQUS 1," ",0
-EQUS 1,"",0
-EQUS 1,"3LN",0
-EQUS 1,"4mat",0
-EQUS 1,"bitshifter",0
-EQUS 1,"bitshifters",0
-EQUS 1,"blargg",0
-EQUS 1,"cmucc",0
-EQUS 1,"crtc",0
-EQUS 1,"ctrix",0
-EQUS 1,"delek",0
-EQUS 1,"gemini",0
-EQUS 1,"goto80",0
-EQUS 1,"haujobb",0
-EQUS 1,"nesdev",0
-EQUS 1,"pwp",0
-EQUS 1,"siren",0
-EQUS 1,"trixter",0
-EQUS 1,"ubulab",0
-EQUS 1,"virt",0
-EQUS 1,"vogue",0
-EQUS 1,"mr. h",0
-EQUS 1,"",0
-EQUS 1,"",0
-EQUS 1,"",0
-EQUS 1,"",0
-EQUS 1,"Thankyou for",0
-EQUS 1,"Watching!",0
-EQUS 1," ",0
-EQUS 1,"",0
-EQUS 1,"",0
-EQUS 1,"",0
-EQUS 1,"",0
-EQUS 1,"",0
-EQUS 1,"",0
+;       123456789abcd
+EQUS  7,"Bad Apple",0
+EQUS  1,"",0
+EQUS  8,"Teletext",0
+EQUS 10,"Version",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS 19,"A",0
+EQUS  4,"Bitshifters",0
+EQUS  5,"Production",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS 10,"Code By",0
+EQUS  1,"",0
+EQUS  5,"Kieran and",0
+EQUS 10,"simon.m",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  8,"Music by",0
+EQUS  1,"",0
+EQUS  1,"Inverse Phase",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS 11,"Art by",0
+EQUS  1,"",0
+EQUS  2,"Horsenburger",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  4,"Released at",0
+EQUS  1,"",0
+EQUS  4,"Block Party",0
+EQUS  7,"Cambridge",0
+EQUS  4,"25 Feb 2017",0
+EQUS  1," ",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  2,"Thanks to...",0
+EQUS  1,"",0
+EQUS  7,"Steve3000",0
+EQUS  2,"Stardot Crew",0
+EQUS 10,"Edit.tf",0
+EQUS 11,"jsbeeb",0
+EQUS 10,"BeebAsm",0
+EQUS  7,"Deflemask",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  4,"Greetz from",0
+EQUS  2,"Kieran to...",0
+EQUS  1,"",0
+EQUS  1,"Raquel Meyers",0
+EQUS  1,"Steve Horsley",0
+EQUS  1,"Dan Farrimond",0
+EQUS  2,"Simon Rawles",0
+EQUS  4,"Peter KVT80",0
+EQUS 10,"Rich TW",0
+EQUS  2,"Matt Godbolt",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  4,"Greetz from",0
+EQUS  1,"Inverse Phase",0
+EQUS 13,"to...",0
+EQUS  1,"",0
+EQUS 16,"3LN",0
+EQUS 14,"4mat",0
+EQUS  5,"bitshifter",0
+EQUS  4,"bitshifters",0
+EQUS 11,"blargg",0
+EQUS 13,"cmucc",0
+EQUS 14,"crtc",0
+EQUS 13,"ctrix",0
+EQUS 13,"delek",0
+EQUS 11,"gemini",0
+EQUS 11,"goto80",0
+EQUS 10,"haujobb",0
+EQUS 11,"nesdev",0
+EQUS 16,"pwp",0
+EQUS 13,"siren",0
+EQUS 10,"trixter",0
+EQUS 11,"ubulab",0
+EQUS 14,"virt",0
+EQUS 13,"vogue",0
+EQUS 14,"mr.h",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  4,"Greetz from",0
+EQUS  2,"Henley to...",0
+EQUS  1,"",0
+EQUS 13,"!FOZ!",0
+EQUS 11,"Merlin",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  2,"Thankyou for",0
+EQUS  7,"Watching!",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  1,"",0
+EQUS  1,"",0
 EQUS &FF
 .fx_creditscroll_text_end
 
