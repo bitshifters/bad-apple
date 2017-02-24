@@ -99,7 +99,7 @@ VID_default_frame_addr = MODE7_base_addr + (VID_default_mode7_ypos * MODE7_char_
 DFS_track_size = (10 * 256)
 
 DISK2_drive_no = 2			; should be 2
-DISK1_first_track = 7		; the track at which the video file is located on side 0; all tracks prior to this are reserved for code
+DISK1_first_track = 8		; the track at which the video file is located on side 0; all tracks prior to this are reserved for code
 DISK1_last_track = 80		; could potentially deduce these from DFS catalog
 DISK2_first_track = 1
 DISK2_last_track = 80		; doesn't actually matter as data stream should indicate end of buffer
@@ -136,7 +136,7 @@ GUARD &9F
 
 \\ System vars
 .writeptr				SKIP 2
-.tempptr				SKIP 2
+.readptr				SKIP 2
 
 .num_deltas				SKIP 2
 .packed_delta			SKIP 2
@@ -253,6 +253,8 @@ ELSE
 	JSR oswrch
 ENDIF
 
+	; copy credits data to CREDITS_DATA_ADDR for later use
+	jsr relocate_credits
 
 IF _SHOW_INTRO
 	; show the intro sequence
@@ -1733,6 +1735,21 @@ ENDIF
 	JSR scroll_page
 	LDA #3:JSR wait_key
 
+;--------- CREDITS -----------------
+
+	; black screen for a dramatic effect
+	LDA #19:LDX #0:JSR osbyte
+	LDA #6:STA &FE00:LDA #0:STA &FE01
+	LDA #1:JSR wait_key
+
+	LDX #LO(CREDITS_DATA_ADDR)
+	LDY #HI(CREDITS_DATA_ADDR)
+	JSR show_page
+
+.creditsloop
+	lda #19:ldx #0:jsr osbyte
+	jsr fx_creditscroll_update
+	jmp creditsloop
 
 	LDX #LO(page_ip)
 	LDY #HI(page_ip)
@@ -1763,6 +1780,21 @@ ENDIF
 	rts
 }
 ENDIF
+
+
+MACRO RESET_MAPCHAR
+
+	MAPCHAR 'A', 'Z', 'A' 
+	MAPCHAR 'a', 'z', 'z'
+	MAPCHAR '0', '9', '0'
+	MAPCHAR '?', '?'
+	MAPCHAR '!', '!'
+	MAPCHAR '.', '.'
+	MAPCHAR ' ', ' '
+
+ENDMACRO
+
+INCLUDE "6502/creditscroll.asm"
 
 .code_end
 
@@ -1815,6 +1847,44 @@ INCBIN "data/pages/horsenburger.txt.bin.exo"
 .page_frame
 INCBIN "data/pages/frame.txt.bin.exo"
 
+; this data block is copied to CREDITS_DATA_ADDR for later use in credits
+; since by then this workspace will have been overwritten
+.relocated_data
+
+.page_credits
+INCBIN "data/pages/credits.txt.bin.exo"
+.page_credits_end
+
+ALIGN 256
+.teletext_font_data				; we use 16/25 lines of this screen
+INCBIN "data/font_5x5_shifted_trimmed.mode7.bin"
+.teletext_font_data_end
+
+
+.relocated_data_end
+
+CREDITS_DATA_ADDR = &400
+
+; routine to relocate credits data to CREDITS_DATA_ADDR
+.relocate_credits
+{
+	ldx #0
+.loop
+	lda relocated_data+0,x
+	sta CREDITS_DATA_ADDR+0,x
+	lda relocated_data+256,x
+	sta CREDITS_DATA_ADDR+256,x
+	lda relocated_data+512,x
+	sta CREDITS_DATA_ADDR+512,x
+	lda relocated_data+768,x
+	sta CREDITS_DATA_ADDR+768,x
+	inx
+	bne loop
+	rts
+}
+
+mode7_font_data = CREDITS_DATA_ADDR+256
+mode7_font_data_second_row = mode7_font_data + 40
 
 
 WORKSPACE_FREE = EXO_buffer_len-(*-EXO_buffer_start)
