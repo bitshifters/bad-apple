@@ -50,9 +50,12 @@ _MUSIC_START_DELAY = 20
 _MUS_BUFFER_2K = TRUE		; enable this to use the 'final' version of the music
 
 
-_SHOW_INTRO = TRUE
+_SHOW_INTRO = TRUE	; probably not needed as a define anymore. 
 
 _SHOW_VIDEO_DEBUG = FALSE	; show the debug video data stuff, turn this OFF for final release
+
+_HACK_CREDITS = TRUE ; force credits to show in intro (for testing)
+
 
 \ ******************************************************************
 \ *	Define macros
@@ -1741,7 +1744,9 @@ ENDIF
 	JSR scroll_page
 	LDA #3:JSR wait_key
 
-;	jmp creditz
+IF _HACK_CREDITS
+	jmp creditz
+ENDIF
 
 	LDX #LO(page_ip)
 	LDY #HI(page_ip)
