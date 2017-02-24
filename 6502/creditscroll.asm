@@ -13,7 +13,7 @@ CREDITS_end_addr = CREDITS_shadow_addr + (MODE7_char_width * MODE7_char_height) 
 CREDITS_first_char = 1
 CREDITS_last_char = MODE7_char_width
 
-ROW_DELAY = 15	; speed of line updates in vsyncs, set to 0 for no delay
+ROW_DELAY = 0 ;15	; speed of line updates in vsyncs, set to 0 for no delay
 
 .line_counter EQUB 0
 
@@ -178,11 +178,12 @@ ROW_DELAY = 15	; speed of line updates in vsyncs, set to 0 for no delay
 ;	lda #144+7
 ;	jsr mode7_set_graphics_shadow_fast			; can remove this if other routine handling colours	
 
+	\\ Scroll everything up
+	JSR fx_creditscroll_scroll_up
+
 	\\ Write new line of text to array
 	JSR fx_creditscroll_write_text_line
 
-	\\ Scroll everything up
-	JSR fx_creditscroll_scroll_up
 
 	.return
 	RTS
@@ -254,6 +255,7 @@ EQUB 0
 
 	.font_addr_1
 	LDA mode7_font_data, Y
+;	EOR #1+2+4+8+16+64
 	INY
 	STA fx_creditscroll_new_line, X
 
@@ -264,6 +266,7 @@ EQUB 0
 
 	.font_addr_2
 	LDA mode7_font_data, Y
+;	EOR #1+2+4+8+16+64	
 	INY
 	STA fx_creditscroll_new_line, X
 
@@ -274,6 +277,7 @@ EQUB 0
 
 	.font_addr_3
 	LDA mode7_font_data, Y
+;	EOR #1+2+4+8+16+64		
 	INY
 	STA fx_creditscroll_new_line, X
 
@@ -385,9 +389,10 @@ EQUB 0
 \ *	Credit Font FX
 \ ******************************************************************
 
-.fx_creditscroll_rotate
+
+.fx_creditscroll_rotate_table
 {
-	FOR n, 0, 255, 1
+	FOR n, 32, 127, 1	; teletext codes range from 32-127
 	a = n AND 1
 	b = n AND 2
 	c = n AND 4
@@ -408,6 +413,9 @@ EQUB 0
 	ENDIF
 	NEXT
 }
+
+fx_creditscroll_rotate = fx_creditscroll_rotate_table-32
+
 
 \\ Spare character row which will get added to bottom of scroll
 \\ Update fn so only top two pixels (1+2) get added to bottom of scroll
