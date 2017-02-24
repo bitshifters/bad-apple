@@ -23,7 +23,7 @@ ROW_DELAY = 0 ;15	; speed of line updates in vsyncs, set to 0 for no delay
 \ ******************************************************************
 
 \\ Scrolls entire screen up by one pixel adding new pixels from array
-
+FAST_SCROLL = TRUE
 .fx_creditscroll_scroll_up
 {
 	\\ Start by updating the top line
@@ -41,10 +41,60 @@ ROW_DELAY = 0 ;15	; speed of line updates in vsyncs, set to 0 for no delay
 	\\ For each character row
 	.y_loop
 
+
+
+
+
+IF FAST_SCROLL
+	lda writeptr+0
+	sta readaddr+1
+	sta writeaddr2+1
+
+	lda writeptr+1
+	sta readaddr+2
+	sta writeaddr2+2
+
+	lda readptr+0
+	sta writeaddr1+1
+
+	lda readptr+1
+	sta writeaddr1+2
+ENDIF
+
+
+
+IF FAST_SCROLL
 	\\ First char in row
 	LDY #CREDITS_first_char
-	.x_loop
+.x_loop
 
+.readaddr
+	LDA &ffff, Y			; [4*]
+	TAX						; [2]
+	LDA glyph_shift_table_1-32,X	; [4*]
+	STA top_bits+1			; [4]
+.writeaddr1
+	LDA &ffff, Y			; [4*]
+	TAX						; [2]
+	LDA glyph_shift_table_2-32,X	; [4*]
+	.top_bits
+	ORA #0					; [2]
+
+	\\ Write the byte back to the screen
+.writeaddr2
+	STA &ffff, Y		; [4*]
+
+	\\ Full width
+	.skip
+	INY						; [2]
+	CPY #CREDITS_last_char	; [2]
+	BCC x_loop				; [2*]
+
+; 36 cycles
+ELSE
+	\\ First char in row
+	LDY #CREDITS_first_char
+.x_loop
 	\\ Get top pixels from row below
 	LDA (readptr), Y		; [5*]
 	TAX						; [2]
@@ -74,8 +124,10 @@ ROW_DELAY = 0 ;15	; speed of line updates in vsyncs, set to 0 for no delay
 	INY						; [2]
 	CPY #CREDITS_last_char	; [2]
 	BCC x_loop				; [2*]
-
 	; 41 cycles per char
+
+ENDIF
+
 
 	\\ Move down a row
 
@@ -421,7 +473,7 @@ fx_creditscroll_rotate = fx_creditscroll_rotate_table-32
 
 
 
-IF 0
+IF FAST_SCROLL
 ; table to shift 3x2 teletext graphic up by 1 pixel row 
 .glyph_shift_table_1
 {
@@ -434,6 +486,7 @@ IF 0
 		f = (n AND 64)/64
 
 		EQUB 32 + (c*1) + (d*2) + (e*4) + (f*8)
+		PRINT n
 	NEXT
 }
 ; table to translate top 2 teletext pixels to bottom 2
