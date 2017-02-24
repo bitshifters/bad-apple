@@ -15,6 +15,9 @@ CREDITS_last_char = MODE7_char_width
 
 ROW_DELAY = 15	; speed of line updates in vsyncs, set to 0 for no delay
 
+LOOP_CREDITS = FALSE
+
+
 .line_counter EQUB 0
 
 
@@ -221,6 +224,7 @@ ENDIF
 	lda line_counter
 	beq new_line
 	dec line_counter
+	lda fx_credits_finished
 	rts
 
 .new_line
@@ -240,6 +244,7 @@ ENDIF
 
 
 	.return
+	lda fx_credits_finished
 	RTS
 }
 
@@ -256,6 +261,22 @@ EQUB 0
 
 .fx_creditscroll_text_idx
 EQUB 0
+
+.fx_credits_finished
+EQUB 0
+
+.fx_creditscroll_init
+{
+	lda #0
+	sta fx_credits_finished
+	sta fx_creditscroll_text_idx
+	sta fx_creditscroll_text_row
+	lda #LO(fx_creditscroll_text)
+	sta fx_creditscroll_text_ptr+0
+	lda #HI(fx_creditscroll_text)
+	sta fx_creditscroll_text_ptr+1	
+	rts
+}
 
 .fx_creditscroll_write_text_line
 {
@@ -398,6 +419,9 @@ EQUB 0
 	LDA #HI(fx_creditscroll_text)
 	STA fx_creditscroll_text_ptr+1
 
+	LDA #255
+	STA fx_credits_finished
+
 	\\ Or just flag not to write any more text..
 	JMP continue_text
 
@@ -485,7 +509,7 @@ IF FAST_SCROLL
 		f = (n AND 64)/64
 
 		EQUB 32 + (c*1) + (d*2) + (e*4) + (f*8)
-		PRINT n
+		;PRINT n
 	NEXT
 }
 ; table to translate top 2 teletext pixels to bottom 2

@@ -54,7 +54,7 @@ _SHOW_INTRO = TRUE	; probably not needed as a define anymore.
 
 _SHOW_VIDEO_DEBUG = FALSE	; show the debug video data stuff, turn this OFF for final release
 
-_HACK_CREDITS = TRUE ; force credits to show in intro (for testing)
+_HACK_CREDITS = FALSE ; force credits to show in intro (for testing)
 
 
 \ ******************************************************************
@@ -270,7 +270,7 @@ IF _SHOW_INTRO
 	jsr introz
 ENDIF
 
-
+.start_demo
 
 	\\ Set gfx mode
 	LDX #0
@@ -448,6 +448,9 @@ ENDIF
 	LDA error_flag
 	BNE track_load_error
 
+	; check for keypress W
+;    LDA#&81:LDX#LO(-34):LDY#&FF:JSR &FFF4:TYA:BNE quit
+
 	JMP next_frame
 
 	.track_load_error
@@ -461,6 +464,7 @@ ENDIF
 	LDA vgm_player_ended
 	BEQ wait_for_music	
 
+.quit
 	JSR stop_eventv
 
 	\\ Exit cleanly (we hope)
@@ -468,7 +472,11 @@ ENDIF
 
 
 IF _SHOW_INTRO
-	jmp creditz
+.show_creditz
+	jsr creditz
+	jmp show_creditz
+	; demo does not restart cleanly atm
+	jmp start_demo
 ENDIF	
 	RTS
 }
@@ -1751,7 +1759,7 @@ ENDIF
 	LDA #3:JSR wait_key
 
 IF _HACK_CREDITS
-	jmp creditz
+	jsr creditz
 ENDIF
 
 	LDX #LO(page_ip)
@@ -1787,6 +1795,8 @@ ENDIF
 {
 ;--------- CREDITS -----------------
 
+	jsr fx_creditscroll_init
+
 	; black screen for a dramatic effect
 	LDA #19:LDX #0:JSR osbyte
 	LDA #6:STA &FE00:LDA #0:STA &FE01
@@ -1799,7 +1809,7 @@ ENDIF
 .creditsloop
 	lda #19:ldx #0:jsr osbyte
 	jsr fx_creditscroll_update
-	jmp creditsloop
+	beq creditsloop
 
 ;--------------------------------------
 	
