@@ -1557,11 +1557,27 @@ INCLUDE "6502\vgmplayer.asm"
 
 IF _SHOW_INTRO
 
+; A is time in seconds
+.wait_key
+{
+	tax
+.wait_loop
+	txa:pha
+	\\ wait for keypress within time A
+    ldx#100:ldy#0:lda#&81:jsr osbyte	
+	pla:tax
+	bcc done	; key pressed
+	cpy #27
+	beq done	; ESC pressed
+	dex
+	bne wait_loop
+.done
+	rts
+}
+
 ; X/Y contain page to show
-; A contains time to show it (centi-seconds)
 .scroll_page
 {
-	PHA
 	JSR MUS_init_decruncher
 	
 	\\ unpack to screen
@@ -1668,19 +1684,15 @@ ENDIF
 	jmp main_loop
 .finished
 
-
-	\\ wait for keypress within time A
-    PLA:TAX:LDY#0:LDA#&81:JSR osbyte
 	rts
 }
 
 
 
 ; X/Y contain page to show
-; A contains time to show it (centi-seconds)
 .show_page
 {
-	PHA:TXA:PHA:TYA:PHA
+	TXA:PHA:TYA:PHA
 	
 	LDA #19:LDX #0:JSR osbyte
 	LDA #6:STA &FE00:LDA #0:STA &FE01
@@ -1700,8 +1712,6 @@ ENDIF
 	LDA #19:LDX #0:JSR osbyte
 	LDA #6:STA &FE00:LDA #25:STA &FE01	
 	
-	\\ wait for keypress within time A
-    PLA:TAX:LDY#0:LDA#&81:JSR osbyte	
 	rts
 }
 
@@ -1710,43 +1720,42 @@ ENDIF
 	.again
 	LDX #LO(page_testcard)
 	LDY #HI(page_testcard)
-	LDA #200
 	JSR show_page
-
-	LDX #LO(page_title)
-	LDY #HI(page_title)
-	LDA #200
-	JSR show_page	
-
-	LDX #LO(page_blockparty)
-	LDY #HI(page_blockparty)
-	LDA #200
-	JSR scroll_page
+	LDA #2:JSR wait_key
 
 	LDX #LO(page_bitshifters)
 	LDY #HI(page_bitshifters)
-	LDA #200
-	JSR scroll_page
+	JSR show_page	
+	LDA #2:JSR wait_key
 
-	LDX #LO(page_badapple)
-	LDY #HI(page_badapple)
-	LDA #200
-	JSR scroll_page	
+	LDX #LO(page_title)
+	LDY #HI(page_title)
+	JSR scroll_page
+	LDA #3:JSR wait_key
+
 
 	LDX #LO(page_ip)
 	LDY #HI(page_ip)
-	LDA #200
 	JSR scroll_page	
+	LDA #4:JSR wait_key
 
 	LDX #LO(page_horsenburger)
 	LDY #HI(page_horsenburger)
-	LDA #200
-	JSR scroll_page
+	JSR scroll_page	
+	LDA #3:JSR wait_key
 
+	LDX #LO(page_blockparty)
+	LDY #HI(page_blockparty)
+	JSR scroll_page
+	LDA #4:JSR wait_key
+
+	; black screen for a dramatic effect
+	LDA #19:LDX #0:JSR osbyte
+	LDA #6:STA &FE00:LDA #0:STA &FE01
+	LDA #1:JSR wait_key
 
 	LDX #LO(page_frame)
 	LDY #HI(page_frame)
-	LDA #0
 	JSR show_page
 
 ;	jmp again
@@ -1793,20 +1802,19 @@ ALIGN &100
 
 .page_testcard
 INCBIN "data/pages/testcard.txt.bin.exo"
-.page_title
-INCBIN "data/pages/title.txt.bin.exo"
 .page_bitshifters
-INCBIN "data/pages/bitshifters.txt.bin.exo"
+INCBIN "data/pages/bslogo.txt.bin.exo"
+.page_title
+INCBIN "data/pages/balogo.txt.bin.exo"
 .page_blockparty
 INCBIN "data/pages/blockparty.txt.bin.exo"
-.page_badapple
-INCBIN "data/pages/badapple.txt.bin.exo"
-.page_frame
-INCBIN "data/pages/frame.txt.bin.exo"
 .page_ip
 INCBIN "data/pages/inversephase.txt.bin.exo"
 .page_horsenburger
 INCBIN "data/pages/horsenburger.txt.bin.exo"
+.page_frame
+INCBIN "data/pages/frame.txt.bin.exo"
+
 
 
 WORKSPACE_FREE = EXO_buffer_len-(*-EXO_buffer_start)
