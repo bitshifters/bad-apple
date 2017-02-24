@@ -262,6 +262,7 @@ IF _SHOW_INTRO
 ENDIF
 
 
+
 	\\ Set gfx mode
 	LDX #0
 	LDA #MODE7_graphic_black+7
@@ -455,6 +456,11 @@ ENDIF
 
 	\\ Exit cleanly (we hope)
 	.return
+
+
+IF _SHOW_INTRO
+	jmp creditz
+ENDIF	
 	RTS
 }
 
@@ -1735,21 +1741,7 @@ ENDIF
 	JSR scroll_page
 	LDA #3:JSR wait_key
 
-;--------- CREDITS -----------------
-
-	; black screen for a dramatic effect
-	LDA #19:LDX #0:JSR osbyte
-	LDA #6:STA &FE00:LDA #0:STA &FE01
-	LDA #1:JSR wait_key
-
-	LDX #LO(CREDITS_DATA_ADDR)
-	LDY #HI(CREDITS_DATA_ADDR)
-	JSR show_page
-
-.creditsloop
-	lda #19:ldx #0:jsr osbyte
-	jsr fx_creditscroll_update
-	jmp creditsloop
+;	jmp creditz
 
 	LDX #LO(page_ip)
 	LDY #HI(page_ip)
@@ -1779,6 +1771,31 @@ ENDIF
 
 	rts
 }
+
+.creditz
+{
+;--------- CREDITS -----------------
+
+	; black screen for a dramatic effect
+	LDA #19:LDX #0:JSR osbyte
+	LDA #6:STA &FE00:LDA #0:STA &FE01
+	LDA #1:JSR wait_key
+
+	LDX #LO(CREDITS_DATA_PAGE)
+	LDY #HI(CREDITS_DATA_PAGE)
+	JSR show_page
+
+.creditsloop
+	lda #19:ldx #0:jsr osbyte
+	jsr fx_creditscroll_update
+	jmp creditsloop
+
+;--------------------------------------
+	
+	rts
+}
+
+
 ENDIF
 
 
@@ -1832,6 +1849,27 @@ ALIGN &100
 .EXO_buffer_start
 ; We have 3Kb to play with. Let's cram it in!
 
+
+; this data block is copied to CREDITS_DATA_ADDR for later use in credits
+; since by then this workspace will have been overwritten
+; Stored first to take advantage of existing page alignment
+ALIGN 256
+.relocated_data
+
+.teletext_font_data				; we use 16/25 lines of this screen
+INCBIN "data/font_5x5_shifted_trimmed.mode7.bin"
+.teletext_font_data_end
+
+ALIGN 256
+.page_credits
+INCBIN "data/pages/credits.txt.bin.exo"
+.page_credits_end
+
+.relocated_data_end
+
+; ----- page data ----------
+
+
 .page_testcard
 INCBIN "data/pages/testcard.txt.bin.exo"
 .page_bitshifters
@@ -1847,25 +1885,14 @@ INCBIN "data/pages/horsenburger.txt.bin.exo"
 .page_frame
 INCBIN "data/pages/frame.txt.bin.exo"
 
-; this data block is copied to CREDITS_DATA_ADDR for later use in credits
-; since by then this workspace will have been overwritten
-.relocated_data
-
-.page_credits
-INCBIN "data/pages/credits.txt.bin.exo"
-.page_credits_end
-
-ALIGN 256
-.teletext_font_data				; we use 16/25 lines of this screen
-INCBIN "data/font_5x5_shifted_trimmed.mode7.bin"
-.teletext_font_data_end
-
-
-.relocated_data_end
 
 CREDITS_DATA_ADDR = &400
+CREDITS_DATA_FONT = CREDITS_DATA_ADDR+0
+CREDITS_DATA_PAGE = CREDITS_DATA_ADDR+768
 
-; routine to relocate credits data to CREDITS_DATA_ADDR
+
+; code routine to relocate credits data to CREDITS_DATA_ADDR
+; also stored in workspace as this is only called once at startup
 .relocate_credits
 {
 	ldx #0
@@ -1883,7 +1910,7 @@ CREDITS_DATA_ADDR = &400
 	rts
 }
 
-mode7_font_data = CREDITS_DATA_ADDR+256
+mode7_font_data = CREDITS_DATA_FONT
 mode7_font_data_second_row = mode7_font_data + 40
 
 

@@ -13,7 +13,7 @@ CREDITS_end_addr = CREDITS_shadow_addr + (MODE7_char_width * MODE7_char_height) 
 CREDITS_first_char = 4
 CREDITS_last_char = MODE7_char_width
 
-ROW_DELAY = 20
+ROW_DELAY = 15	; speed of line updates in vsyncs, set to 0 for no delay
 
 .line_counter EQUB 0
 
@@ -167,6 +167,13 @@ ROW_DELAY = 20
 
 .fx_creditscroll_update
 {
+	lda line_counter
+	beq new_line
+	dec line_counter
+	rts
+
+.new_line
+
 	\\ Set graphics white
 ;	lda #144+7
 ;	jsr mode7_set_graphics_shadow_fast			; can remove this if other routine handling colours	
@@ -304,6 +311,10 @@ EQUB 0
 	CPX #6	
 	BCC still_same_text
 
+
+
+.new_line	
+
 	\\ Next line of text
 	LDY fx_creditscroll_text_idx
 
@@ -341,6 +352,10 @@ EQUB 0
 	LDA fx_creditscroll_text_ptr+1
 	ADC #0
 	STA fx_creditscroll_text_ptr+1
+
+	; insert a delay
+	lda #ROW_DELAY
+	sta line_counter
 
 	\\ Next line of text
 	.continue_text
@@ -494,32 +509,88 @@ SET_TELETEXT_FONT_CHAR_MAP
 \\ New font is 3 chars wide = max 13 letters per line from 1
 
 .fx_creditscroll_text
-EQUS 4,"ABCDEFGHIJKL",0
-EQUS 4,"MNOPQRSTUVWX",0
-EQUS 4,"YZ0123456789",0
-EQUS &FF
-EQUS 4,"?!.",0
-EQUS 4," ",0
-EQUS 4,"Bitshifters",0
-EQUS 5,"Presents",0
-EQUS 6,"Teletextr",0
-EQUS 4," ",0
-EQUS 4,"A new demo",0
-EQUS 5,"By Henley",0
-EQUS 6,"and Kieran..",0
-EQUS 4," ",0
-EQUS 4,"BBC rulez!",0
-EQUS 5,"Etc.",0
-EQUS 4," ",0
-EQUS 4," ",0
-EQUS 4," ",0
-EQUS 4," ",0
-EQUS 4," ",0
-EQUS 4," ",0
-EQUS 4," ",0
-EQUS 4," ",0
-EQUS &FF
+;       0123456789ab
+EQUS 1,"Test 1",0
+EQUS 2,"Test 2",0
+EQUS 3,"Test 3",0
+EQUS 4,"Test 4",0
+EQUS 5,"Test 5",0
 
+EQUS 4,"Bad Apple",0
+EQUS 4,"Teletext",0
+EQUS 4," ",0
+EQUS 4,"A",0
+EQUS 4,"Bitshifters",0
+EQUS 4,"Production",0
+EQUS 4," ",0
+EQUS 4,"Code By",0
+EQUS 4,"Kieran and",0
+EQUS 4,"simondotm",0
+EQUS 4," ",0
+EQUS 4," ",0
+EQUS 4,"Music by",0
+EQUS 4,"Inverse Phase",0
+EQUS 4," ",0
+EQUS 4,"Art by",0
+EQUS 4,"Horsenburger",0
+EQUS 4," ",0
+EQUS 4," ",0
+EQUS 4,"Released at",0
+EQUS 4,"Block Party",0
+EQUS 4,"Cambridge",0
+EQUS 4,"25 Feb 2017",0
+EQUS 4," ",0
+EQUS 4,"Greetz from",0
+EQUS 4,"Kieran to...",0
+EQUS 4," ",0
+EQUS 4,"Raquel Meyers",0
+EQUS 4,"Steve Horsley",0
+EQUS 4,"Dan Farrimond",0
+EQUS 4,"Simon Rawles",0
+EQUS 4,"Peter KVT80",0
+EQUS 4," ",0
+EQUS 4,"Greetz from",0
+EQUS 4,"Inverse Phase",0
+EQUS 4,"to...",0
+EQUS 4," ",0
+EQUS 4,"",0
+EQUS 4,"3LN",0
+EQUS 4,"4mat",0
+EQUS 4,"bitshifter",0
+EQUS 4,"bitshifters",0
+EQUS 4,"blargg",0
+EQUS 4,"cmucc",0
+EQUS 4,"crtc",0
+EQUS 4,"ctrix",0
+EQUS 4,"delek",0
+EQUS 4,"gemini",0
+EQUS 4,"goto80",0
+EQUS 4,"haujobb",0
+EQUS 4,"nesdev",0
+EQUS 4,"pwp",0
+EQUS 4,"siren",0
+EQUS 4,"trixter",0
+EQUS 4,"ubulab",0
+EQUS 4,"virt",0
+EQUS 4,"vogue",0
+EQUS 4,"mr. h",0
+EQUS 4,"",0
+EQUS 4,"",0
+EQUS 4,"",0
+EQUS 4,"",0
+EQUS 4,"Thankyou for",0
+EQUS 4,"Watching!",0
+EQUS 4," ",0
+EQUS 4,"",0
+EQUS 4,"",0
+EQUS 4,"",0
+EQUS 4,"",0
+EQUS 4,"",0
+EQUS 4,"",0
+EQUS &FF
+.fx_creditscroll_text_end
+
+PRINT "credits text size ", ~(fx_creditscroll_text_end-fx_creditscroll_text), " bytes"
 RESET_MAPCHAR
 
 
