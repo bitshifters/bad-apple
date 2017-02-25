@@ -50,9 +50,9 @@ _MUSIC_START_DELAY = 20
 _MUS_BUFFER_2K = TRUE		; enable this to use the 'final' version of the music
 
 
-_SHOW_INTRO = TRUE	; probably not needed as a define anymore. 
+_SHOW_INTRO = FALSE	; probably not needed as a define anymore. 
 
-_SHOW_VIDEO_DEBUG = FALSE	; show the debug video data stuff, turn this OFF for final release
+_SHOW_VIDEO_DEBUG = TRUE	; show the debug video data stuff, turn this OFF for final release
 
 _HACK_CREDITS = FALSE ; force credits to show in intro (for testing)
 
@@ -135,7 +135,7 @@ EXO_zp_dest_bi = EXO_zp_dest_hi + 2	; dest addr hi
 
 \\ Our own app variables
 ORG &7B
-GUARD &9F
+GUARD &A0
 
 \\ System vars
 .writeptr				SKIP 2
@@ -151,7 +151,7 @@ GUARD &9F
 .track_no				SKIP 1
 .load_to_HI				SKIP 1
 .xpos					SKIP 1
-
+.play_music				SKIP 1
 
 IF _ENABLE_WALLCLOCK
 .clock_vsync			SKIP 1
@@ -277,6 +277,7 @@ ENDIF
 	STA frame_no+1
 	STA error_flag
 	STA decode_lock
+	STA play_music
 
 	IF _ENABLE_WALLCLOCK
 	STA clock_secs
@@ -378,31 +379,24 @@ ENDIF
 		CLI
 	}
 
-	\\ Start the music!
-
-	IF _MUSIC_START_DELAY = 0
-	LDX #LO(poll_player)
-	LDY #HI(poll_player)
-	JSR start_eventv
-	ENDIF
-
 	\\ Top of our loop
 	.next_frame
 
-	\\ Wait vsync
-	LDA #19
-	JSR osbyte
+	\\ Wait vsync by hand - can't use *FX19
+	LDA vsync_count
+	.wait_for_vsync
+	CMP vsync_count
+	BEQ wait_for_vsync
 
-	IF _MUSIC_START_DELAY <> 0
+	\\ Start music at correct frame
 	{
 		.music_start_code
 		LDA frame_no
 		CMP #_MUSIC_START_DELAY
 		BNE not_ready
 
-		LDX #LO(poll_player)
-		LDY #HI(poll_player)
-		JSR start_eventv
+		LDA #1
+		STA play_music
 
 		LDA #JMP_OP			; JMP
 		STA music_start_code
@@ -412,12 +406,6 @@ ENDIF
 		STA music_start_code+2
 		.not_ready
 	}
-	ENDIF
-
-;	LDA vsync_count
-;	.wait_for_vsync
-;	CMP vsync_count
-;	BEQ wait_for_vsync
 
 	IF _DEBUG
 	JSR write_debug_info
@@ -445,21 +433,20 @@ ENDIF
 	JMP next_frame
 
 	.track_load_error
-	SEI
-	LDA old_irqv:STA IRQ1V
-	LDA old_irqv+1:STA IRQ1V+1		; set interrupt handler
-	CLI
 
 	\\ Stop the music!
 	.wait_for_music
 	LDA vgm_player_ended
 	BEQ wait_for_music	
 
-	JSR stop_eventv
+	\\ Shutdown irqs
+	SEI
+	LDA old_irqv:STA IRQ1V
+	LDA old_irqv+1:STA IRQ1V+1		; set interrupt handler
+	CLI
 
 	\\ Exit cleanly (we hope)
 	.return
-
 
 IF _SHOW_INTRO
 	jmp creditz
@@ -923,12 +910,24 @@ ENDIF
 	\\ Which interrupt?
 
 	LDA &FE4D
+	AND #2
+	BEQ not_vsync
+
+	\\ Acknowledge actual vsync interrupt
+	STA &FE4D
+
+	LDA play_music
+	BEQ not_vsync
+
+	\\ Do the music once we've started
+	JSR poll_player
+
+	\\ Still test for timer 1 as second pri
+
+	.not_vsync
+	LDA &FE4D
 	AND #&40			; timer 1
 	BNE is_timer1
-
-;	LDA &FE4D
-;	AND #2
-;	BNE is_vsync
 
 	\\ Pass on to OS IRQ handler
 	.return_to_os
@@ -955,6 +954,10 @@ ENDIF
 	.no_secs
 	STA clock_vsync
 	ENDIF
+
+	\\ If there's an error (most likely we've run out of data) then exit
+	LDA error_flag
+	BNE return_timer1
 
 	\\ If we're already busy just exit function
 	LDA decode_lock
@@ -1059,46 +1062,6 @@ ENDIF
 \ *	Event Vector Routines
 \ ******************************************************************
 
-.old_eventv
-EQUW 0
-
-.start_eventv				; new event handler in X,Y
-{
-	\\ Set new Event handler
-	sei
-	LDA EVENTV
-	STA old_eventv
-	LDA EVENTV+1
-	STA old_eventv+1
-
-	stx EVENTV
-	sty EVENTV+1
-	cli
-	
-	\\ Enable VSYNC event.
-	lda #14
-	ldx #4
-	jsr osbyte
-	rts
-}
-	
-.stop_eventv
-{
-	\\ Disable VSYNC event.
-	lda #13
-	ldx #4
-	jsr osbyte
-
-	\\ Reset old Event handler
-	SEI
-	LDA old_eventv
-	STA EVENTV
-	LDA old_eventv+1
-	STA EVENTV+1
-	CLI 
-
-	rts
-}
 
 \ ******************************************************************
 \ *	Debug helpers
