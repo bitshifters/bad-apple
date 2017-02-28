@@ -50,9 +50,9 @@ _MUSIC_START_DELAY = 20
 _MUS_BUFFER_2K = TRUE		; enable this to use the 'final' version of the music
 
 
-_SHOW_INTRO = TRUE	; probably not needed as a define anymore. 
+_SHOW_INTRO = FALSE	; probably not needed as a define anymore. 
 
-_SHOW_VIDEO_DEBUG = FALSE	; show the debug video data stuff, turn this OFF for final release
+_SHOW_VIDEO_DEBUG = TRUE	; show the debug video data stuff, turn this OFF for final release
 
 _HACK_CREDITS = FALSE ; force credits to show in intro (for testing)
 
@@ -99,7 +99,10 @@ VID_default_frame_height = 22		; 19
 VID_default_frame_size = (MODE7_char_width * VID_default_frame_height)
 VID_default_frame_addr = MODE7_base_addr + (VID_default_mode7_ypos * MODE7_char_width)
 
-DFS_track_size = (10 * 256)
+DFS_sector_size = 256
+DFS_sectors_per_track = 10
+DFS_sectors_to_load = 1
+DFS_track_size = (DFS_sectors_per_track * DFS_sector_size)
 
 DISK2_drive_no = 2			; should be 2
 DISK1_first_track = 8		; the track at which the video file is located on side 0; all tracks prior to this are reserved for code
@@ -135,7 +138,7 @@ EXO_zp_dest_bi = EXO_zp_dest_hi + 2	; dest addr hi
 
 \\ Our own app variables
 ORG &7B
-GUARD &9F
+GUARD &A0
 
 \\ System vars
 .writeptr				SKIP 2
@@ -148,6 +151,7 @@ GUARD &9F
 .error_flag				SKIP 1
 .vsync_count			SKIP 1
 .decode_lock			SKIP 1
+.sector_no				SKIP 1
 .track_no				SKIP 1
 .load_to_HI				SKIP 1
 .xpos					SKIP 1
@@ -194,6 +198,8 @@ decrunch_table = &A00
 tabl_bi = decrunch_table
 tabl_lo = decrunch_table + 52
 tabl_hi = decrunch_table + 104
+
+clock_param = &0000
 
 mus_decrunch_table = &B00
 ;.mus_decrunch_table  SKIP MUS_TABL_SIZE
@@ -282,6 +288,12 @@ ENDIF
 	STA frame_no+1
 	STA error_flag
 	STA decode_lock
+	STA clock_param+0
+	STA clock_param+1
+	STA clock_param+2
+	STA clock_param+3
+	STA clock_param+4
+	STA sector_no
 
 	IF _ENABLE_WALLCLOCK
 	STA clock_secs
@@ -303,6 +315,12 @@ ENDIF
 	LDY #HI(music_data)
 	JSR vgm_init_stream
 	BMI read_error
+
+	\\ Zero system clock
+	LDX #LO(clock_param)
+	LDY #HI(clock_param)
+	LDA #&2
+	JSR osword
 
 	\\ Load our entire stream buffer from first track
 
@@ -331,6 +349,12 @@ ENDIF
 	JMP return
 
 	.read_success
+
+	\\ Read system clock
+	LDX #LO(clock_param)
+	LDY #HI(clock_param)
+	LDA #&1
+	JSR osword
 
 	\\ Start decompressor
 	LDX #LO(STREAM_buffer_start - 1)
@@ -436,7 +460,7 @@ ENDIF
 
 	\\ Is it more than a "track" away?
 	SBC load_to_HI
-	CMP #HI(DFS_track_size)
+	CMP #DFS_sectors_to_load
 	BCC not_ready_to_load
 
 	\\ If so, load a track's worth of data into our buffer
@@ -637,6 +661,13 @@ IF _SHOW_VIDEO_DEBUG
 	INY
 	LDA track_no
 	JSR debug_write_hex
+	LDA #'/'
+	STA (debugptr),Y
+	INY
+	LDA sector_no
+	ADC #'0'
+	STA (debugptr),Y
+	INY
 
 	INY
 	LDA load_to_HI
@@ -856,6 +887,9 @@ ENDIF
 	\\ Store track no in params block
 	STA osword_params_track
 
+	LDA sector_no
+	STA osword_params_sector
+
 	\\ Update load address in params block
 	LDA load_to_HI
 	STA osword_params_address+1
@@ -871,7 +905,15 @@ ENDIF
 	STA error_flag
 
 	\\ Next track
+	CLC
+	LDA sector_no
+	ADC #DFS_sectors_to_load
+	CMP #DFS_sectors_per_track
+	BCC same_track
+	SBC #DFS_sectors_per_track
 	INC track_no
+	.same_track
+	STA sector_no
 
 	\\ Which disk?
 	LDA osword_params_drive
@@ -907,7 +949,7 @@ ENDIF
 	\\ Increment our load ptr
 	CLC
 	LDA load_to_HI
-	ADC #HI(DFS_track_size)
+	ADC #DFS_sectors_to_load
 
 	\\ Have we fallen off the end of the buffer?
 	CMP #HI(STREAM_buffer_end)
@@ -1547,7 +1589,7 @@ EQUB 0				; logical track
 .osword_params_sector
 EQUB 0				; logical sector
 .osword_params_size_sectors
-EQUB &2A			; sector size / number sectors = 256 / 10
+EQUB &20 + DFS_sectors_to_load		; sector size / number sectors = 256 / 10
 .osword_params_return
 EQUB 0				; returned error value
 
