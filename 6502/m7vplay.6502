@@ -45,7 +45,6 @@ _CHECK_LOAD_BUFFER = FALSE
 
 _ENABLE_CMD_LINE_PARAMS = FALSE
 
-_MUSIC_START_DELAY = 20
 
 _MUS_BUFFER_2K = TRUE		; enable this to use the 'final' version of the music
 
@@ -101,7 +100,7 @@ VID_default_frame_addr = MODE7_base_addr + (VID_default_mode7_ypos * MODE7_char_
 
 DFS_sector_size = 256
 DFS_sectors_per_track = 10
-DFS_sectors_to_load = 1
+DFS_sectors_to_load = 10
 DFS_track_size = (DFS_sectors_per_track * DFS_sector_size)
 
 DISK2_drive_no = 2			; should be 2
@@ -114,7 +113,7 @@ STREAM_buffer_size = (3 * DFS_track_size)
 
 TIMER_latch = 20000-2		; 20ms = 1x vsync :)
 
-FX_frame = 336
+FX_frame = 343
 
 \ ******************************************************************
 \ *	Define fast (zero page) runtime variables
@@ -741,6 +740,9 @@ ENDIF
 	JSR get_decrunched_byte
 	BCS return				; read error
 
+	TAX
+	BEQ skip_line
+
 	CMP #128
 	BCS write_one_char
 
@@ -748,7 +750,6 @@ ENDIF
 	BCS write_many_blocks
 
 	\\ write many spaces
-	TAX
 	LDA #32
 	LDY xpos
 	.space_loop
@@ -779,6 +780,7 @@ ENDIF
 	CPY #MODE7_char_width
 	BCC loop
 
+	.skip_line
 	DEC num_deltas
 	BEQ return
 
