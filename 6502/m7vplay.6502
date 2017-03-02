@@ -45,6 +45,7 @@ _CHECK_LOAD_BUFFER = FALSE
 
 _ENABLE_CMD_LINE_PARAMS = FALSE
 
+_MUSIC_START_DELAY = 30
 
 _MUS_BUFFER_2K = TRUE		; enable this to use the 'final' version of the music
 
