@@ -49,7 +49,6 @@ _MUSIC_START_DELAY = 30
 
 _MUS_BUFFER_2K = TRUE		; enable this to use the 'final' version of the music
 
-
 _SHOW_INTRO = TRUE	; probably not needed as a define anymore. 
 
 _SHOW_VIDEO_DEBUG = FALSE	; show the debug video data stuff, turn this OFF for final release
@@ -114,7 +113,7 @@ STREAM_buffer_size = (3 * DFS_track_size)
 
 TIMER_latch = 20000-2		; 20ms = 1x vsync :)
 
-FX_frame = 343
+FX_frame = 343				; frame to turn on separated gfx - at apple cut / invert
 
 \ ******************************************************************
 \ *	Define fast (zero page) runtime variables
@@ -1781,12 +1780,12 @@ ENDIF
 
 IF _HACK_CREDITS
 	jsr creditz
-ENDIF
-
+ELSE
 	LDX #LO(page_ip)
 	LDY #HI(page_ip)
 	JSR scroll_page	
 	LDA #4:JSR wait_key
+ENDIF
 
 	LDX #LO(page_horsenburger)
 	LDY #HI(page_horsenburger)
@@ -2079,10 +2078,6 @@ INCBIN "data/bbcacred.bin.exo"
 ; round up to a page in length (makes track alignment math easier)
 ALIGN 256
 .credits_music_end
-
-PRINT ~P%
-PRINT ~STREAM_buffer_start
-PRINT ~STREAM_buffer_size
 
 ; ensure we reserve further bytes to make buffer STREAM_buffer_size
 SKIP STREAM_buffer_size-(*-STREAM_buffer_start)
