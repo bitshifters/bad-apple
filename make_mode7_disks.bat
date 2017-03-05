@@ -11,7 +11,7 @@ CD files
 rem boot & track padding now compiled into demo 
 rem ..\bin\bbcim -a "..\%1\disks\%1_disk1.ssd" "Boot"
 rem ..\bin\bbcim -a "..\%1\disks\%1_disk1.ssd" "Dummy2"
-..\bin\bbcim -a "..\%1\disks\%1_disk2.ssd" "Dummy8"
+..\bin\bbcim -a "..\%1\disks\%1_disk2.ssd" "Readme"
 CD "..\%1\files"
 ..\..\bin\bbcim -a "..\disks\%1_disk1.ssd" "%1_beeb_00"
 ..\..\bin\bbcim -a "..\disks\%1_disk2.ssd" "%1_beeb_01"
