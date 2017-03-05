@@ -50,9 +50,9 @@ _MUSIC_START_DELAY = 30
 _MUS_BUFFER_2K = TRUE		; enable this to use the 'final' version of the music
 
 
-_SHOW_INTRO = FALSE	; probably not needed as a define anymore. 
+_SHOW_INTRO = TRUE	; probably not needed as a define anymore. 
 
-_SHOW_VIDEO_DEBUG = TRUE	; show the debug video data stuff, turn this OFF for final release
+_SHOW_VIDEO_DEBUG = FALSE	; show the debug video data stuff, turn this OFF for final release
 
 _HACK_CREDITS = FALSE ; force credits to show in intro (for testing)
 
@@ -138,7 +138,7 @@ EXO_zp_dest_bi = EXO_zp_dest_hi + 2	; dest addr hi
 
 \\ Our own app variables
 ORG &7B
-GUARD &A0
+GUARD &9F
 
 \\ System vars
 .writeptr				SKIP 2
@@ -173,8 +173,6 @@ ENDIF
 IF _COUNT_DECRUNCHES
 .decrunch_count			SKIP 2
 ENDIF
-
-.old_irqv				SKIP 2
 
 
 \ ******************************************************************
@@ -288,11 +286,6 @@ ENDIF
 	STA frame_no+1
 	STA error_flag
 	STA decode_lock
-	STA clock_param+0
-	STA clock_param+1
-	STA clock_param+2
-	STA clock_param+3
-	STA clock_param+4
 	STA sector_no
 
 	IF _ENABLE_WALLCLOCK
@@ -317,10 +310,7 @@ ENDIF
 	BMI read_error
 
 	\\ Zero system clock
-	LDX #LO(clock_param)
-	LDY #HI(clock_param)
-	LDA #&2
-	JSR osword
+	JSR device_test_start_clock
 
 	\\ Load our entire stream buffer from first track
 
@@ -351,27 +341,7 @@ ENDIF
 	.read_success
 
 	\\ Read system clock
-	LDX #LO(clock_param)
-	LDY #HI(clock_param)
-	LDA #&1
-	JSR osword
-
-	\\ Check speed of inital load
-	LDA clock_param
-	CMP #50										; anything < 1/2 second considered fast
-	BCS slow_device
-
-	\\ Fast device detected!
-	\\ Change to load by sector
-
-	LDA #1
-	STA sectors_to_load_1+1
-	STA sectors_to_load_2+1
-	STA sectors_to_load_3+1
-	ORA #&20
-	STA osword_params_size_sectors
-
-	.slow_device
+	JSR device_test_stop_clock
 
 	\\ Start decompressor
 	LDX #LO(STREAM_buffer_start - 1)
@@ -477,7 +447,7 @@ ENDIF
 
 	\\ Is it more than a "track" away?
 	SBC load_to_HI
-	.sectors_to_load_1
+	.^sectors_to_load_1
 	CMP #DFS_sectors_to_load
 	BCC not_ready_to_load
 
@@ -994,6 +964,9 @@ ENDIF
 \ * IRQ
 \ ******************************************************************
 
+.old_irqv
+EQUW &FFFF
+
 .irq_handler
 {
 	LDA &FC
@@ -1258,23 +1231,6 @@ IF _ENABLE_WALLCLOCK
 }
 ENDIF
 
-.debug_print_A				; trashes X
-{
-	PHA:PHA
-	LSR A:LSR A:LSR A:LSR A
-	TAX
-	LDA debug_hexchars,X
-	JSR oswrch
-	PLA
-	AND #&0F
-	TAX
-	LDA debug_hexchars,X
-	JSR oswrch
-	LDA #32
-	JSR oswrch
-	PLA
-	RTS
-}
 ENDIF
 
 
@@ -2028,6 +1984,48 @@ CREDITS_DATA_PAGE = CREDITS_DATA_ADDR+768
 mode7_font_data = CREDITS_DATA_FONT
 mode7_font_data_second_row = mode7_font_data + 40
 
+.device_test_start_clock
+{
+	LDA #0
+	STA clock_param+0
+	STA clock_param+1
+	STA clock_param+2
+	STA clock_param+3
+	STA clock_param+4
+
+	LDX #LO(clock_param)
+	LDY #HI(clock_param)
+	LDA #&2
+	JSR osword
+
+	RTS
+}
+
+.device_test_stop_clock
+{
+	LDX #LO(clock_param)
+	LDY #HI(clock_param)
+	LDA #&1
+	JSR osword
+
+	\\ Check speed of inital load
+	LDA clock_param
+	CMP #50										; anything < 1/2 second considered fast
+	BCS slow_device
+
+	\\ Fast device detected!
+	\\ Change to load by sector
+
+	LDA #1
+	STA sectors_to_load_1+1
+	STA sectors_to_load_2+1
+	STA sectors_to_load_3+1
+	ORA #&20
+	STA osword_params_size_sectors
+
+	.slow_device
+	RTS	
+}
 
 WORKSPACE_FREE = EXO_buffer_len-(*-EXO_buffer_start)
 
@@ -2081,6 +2079,10 @@ INCBIN "data/bbcacred.bin.exo"
 ; round up to a page in length (makes track alignment math easier)
 ALIGN 256
 .credits_music_end
+
+PRINT ~P%
+PRINT ~STREAM_buffer_start
+PRINT ~STREAM_buffer_size
 
 ; ensure we reserve further bytes to make buffer STREAM_buffer_size
 SKIP STREAM_buffer_size-(*-STREAM_buffer_start)
