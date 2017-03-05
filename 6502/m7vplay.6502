@@ -356,6 +356,23 @@ ENDIF
 	LDA #&1
 	JSR osword
 
+	\\ Check speed of inital load
+	LDA clock_param
+	CMP #50										; anything < 1/2 second considered fast
+	BCS slow_device
+
+	\\ Fast device detected!
+	\\ Change to load by sector
+
+	LDA #1
+	STA sectors_to_load_1+1
+	STA sectors_to_load_2+1
+	STA sectors_to_load_3+1
+	ORA #&20
+	STA osword_params_size_sectors
+
+	.slow_device
+
 	\\ Start decompressor
 	LDX #LO(STREAM_buffer_start - 1)
 	LDY #HI(STREAM_buffer_start - 1)
@@ -460,6 +477,7 @@ ENDIF
 
 	\\ Is it more than a "track" away?
 	SBC load_to_HI
+	.sectors_to_load_1
 	CMP #DFS_sectors_to_load
 	BCC not_ready_to_load
 
@@ -664,6 +682,7 @@ IF _SHOW_VIDEO_DEBUG
 	LDA #'/'
 	STA (debugptr),Y
 	INY
+	CLC
 	LDA sector_no
 	ADC #'0'
 	STA (debugptr),Y
@@ -910,6 +929,7 @@ ENDIF
 	\\ Next track
 	CLC
 	LDA sector_no
+	.sectors_to_load_2
 	ADC #DFS_sectors_to_load
 	CMP #DFS_sectors_per_track
 	BCC same_track
@@ -952,6 +972,7 @@ ENDIF
 	\\ Increment our load ptr
 	CLC
 	LDA load_to_HI
+	.sectors_to_load_3
 	ADC #DFS_sectors_to_load
 
 	\\ Have we fallen off the end of the buffer?
