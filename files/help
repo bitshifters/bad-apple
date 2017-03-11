@@ -17,7 +17,7 @@ You will need two separate .SSD images added to your MMB file.
 Load the images into drives 0 and 2 using the following commands:
 *DR.0
 *DIN <disk #1>
-*DR2.
+*DR.2
 *DIN <disk #2>
 
 If you experience any bugs or hardware compatibility problems please contact us
