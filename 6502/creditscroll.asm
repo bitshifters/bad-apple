@@ -680,6 +680,7 @@ EQUS 10,"Edit.tf",0
 EQUS 11,"jsbeeb",0
 EQUS 10,"BeebAsm",0
 EQUS  7,"Deflemask",0
+;EQUS  8,"Exomizer",0
 EQUS  1,"",0
 EQUS  1,"",0
 EQUS  1,"",0
@@ -690,9 +691,14 @@ EQUS  1,"Raquel Meyers",0
 EQUS  1,"Steve Horsley",0
 EQUS  1,"Dan Farrimond",0
 EQUS  2,"Simon Rawles",0
-EQUS  4,"Peter KVT80",0
+EQUS  1,"Alistair Cree",0
+EQUS  4,"Peter Kwan",0
 EQUS 10,"Rich TW",0
 EQUS  2,"Matt Godbolt",0
+;EQUS  3,"Puppeh.CRTC",0
+;EQUS  8,"rc55.CRTC",0
+;EQUS  2,"Ramon.Desire",0
+;EQUS  2,"Paul.Ate Bit",0
 EQUS  1,"",0
 EQUS  1,"",0
 EQUS  1,"",0

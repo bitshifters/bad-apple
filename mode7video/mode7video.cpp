@@ -45,6 +45,7 @@ static unsigned char prevmode7[MODE7_MAX_SIZE];
 static unsigned char delta[MODE7_MAX_SIZE];
 static unsigned char mode7[MODE7_MAX_SIZE];
 
+static int savedwrites;
 
 int get_colour_from_rgb(unsigned char r, unsigned char g, unsigned char b)
 {
@@ -128,7 +129,7 @@ int flushcode(unsigned char curcode, int curcount, unsigned char **p)
 	return 0;
 }
 
-int calc_steve_size(unsigned char *screen, unsigned char blank, unsigned char **ptrtoptr)
+int calc_steve_size(unsigned char *screen, unsigned char *delta, unsigned char blank, unsigned char **ptrtoptr)
 {
 	int numbytes = 0;
 
@@ -140,52 +141,73 @@ int calc_steve_size(unsigned char *screen, unsigned char blank, unsigned char **
 		unsigned char curcode = 0;
 		int curcount = 0;
 
-		while (x7 < MODE7_WIDTH)
+		for (x7 = FRAME_FIRST_COLUMN; x7 < MODE7_WIDTH; x7++)
 		{
-			unsigned char curchar = screen[y7*MODE7_WIDTH + x7];
-
-			if (curchar == blank)
-			{
-				if (curcode == MODE7_BLANK)
-				{
-					curcount++;
-				}
-				else
-				{
-					numbytes += flushcode(curcode, curcount, ptrtoptr);
-					curcode = MODE7_BLANK;
-					curcount = 1;
-				}
-			}
-			else if (curchar == 127)
-			{
-				if (curcode == 127)
-				{
-					curcount++;
-				}
-				else
-				{
-					numbytes += flushcode(curcode, curcount, ptrtoptr);
-					curcode = 127;
-					curcount = 1;
-				}
-			}
-			else
-			{
-				numbytes += flushcode(curcode, curcount, ptrtoptr);
-				if (ptrtoptr)
-				{
-					*(*ptrtoptr)++ = curchar | 128;
-				//	printf("0x%02x ", curchar | 128);
-				}
-				numbytes += 1;			// graphic char
-				curcode = curcount = 0;
-			}
-
-			x7++;
+			if (delta[y7*MODE7_WIDTH + x7] != 0)
+				break;
 		}
 
-		numbytes += flushcode(curcode, curcount, ptrtoptr);
+		if (x7 < MODE7_WIDTH)
+		{
+			x7 = FRAME_FIRST_COLUMN;
+
+			while (x7 < MODE7_WIDTH)
+			{
+				unsigned char curchar = screen[y7*MODE7_WIDTH + x7];
+
+				if (curchar == blank)
+				{
+					if (curcode == MODE7_BLANK)
+					{
+						curcount++;
+					}
+					else
+					{
+						numbytes += flushcode(curcode, curcount, ptrtoptr);
+						curcode = MODE7_BLANK;
+						curcount = 1;
+					}
+				}
+				else if (curchar == 127)
+				{
+					if (curcode == 127)
+					{
+						curcount++;
+					}
+					else
+					{
+						numbytes += flushcode(curcode, curcount, ptrtoptr);
+						curcode = 127;
+						curcount = 1;
+					}
+				}
+				else
+				{
+					numbytes += flushcode(curcode, curcount, ptrtoptr);
+					if (ptrtoptr)
+					{
+						*(*ptrtoptr)++ = curchar | 128;
+						//	printf("0x%02x ", curchar | 128);
+					}
+					numbytes += 1;			// graphic char
+					curcode = curcount = 0;
+				}
+
+				x7++;
+			}
+	
+			numbytes += flushcode(curcode, curcount, ptrtoptr);
+		}
+		else
+		{
+			if (ptrtoptr)
+			{
+				*(*ptrtoptr)++ = 0;
+			}
+			numbytes += 1;
+			savedwrites += FRAME_WIDTH;
+		}
+
 	}
 
 	if (ptrtoptr)
@@ -234,6 +256,15 @@ int main(int argc, char **argv)
 	memset(prevmode7, 0, MODE7_MAX_SIZE);
 	memset(delta, 0, MODE7_MAX_SIZE);
 	memset(delta_counts, 0, sizeof(int) * (NUM_FRAMES+1));
+
+	int totalblanks = 0;
+	int totaldeltaf = 0;
+	int totalsteves = 0;
+	int totalblankb = 0;
+	int totaldeltab = 0;
+	int totalsteveb = 0;
+
+	savedwrites = 0;
 
 	FILE *file;
 
@@ -350,7 +381,7 @@ int main(int argc, char **argv)
 		delta_counts[n] = numdeltas;
 		numdeltabytes = numdeltas * BYTES_PER_DELTA;
 
-		int stevebytes = calc_steve_size(mode7, MODE7_BLANK, NULL);
+		int stevebytes = calc_steve_size(mode7, delta, MODE7_BLANK, NULL);
 		int stevedbytes = INT_MAX;// calc_steve_size(delta, 0, NULL);
 		int minsteve = stevebytes < stevedbytes ? stevebytes : stevedbytes;
 
@@ -360,6 +391,9 @@ int main(int argc, char **argv)
 			{
 				// Blank frame
 				*ptr++ = 0;
+
+				totalblanks++;
+				totalblankb++;
 			}
 			else
 			{
@@ -434,6 +468,9 @@ int main(int argc, char **argv)
 						previ = i;								// or 0 for offset from screen start
 					}
 				}
+
+				totaldeltaf++;
+				totaldeltab += 1 + 2 * numdeltas;
 #endif
 			}
 		}
@@ -446,16 +483,17 @@ int main(int argc, char **argv)
 				// Full steve
 				*ptr++ = 0xFE;
 
-				calc_steve_size(mode7, MODE7_BLANK, &ptr);
+				totalsteveb += 1 + calc_steve_size(mode7, delta, MODE7_BLANK, &ptr);
 			}
 			else
 			{
 				// Delta steve
 				*ptr++ = 0XFD;
 
-				calc_steve_size(delta, 0, &ptr);
+				totalsteveb += 1 + calc_steve_size(delta, delta, 0, &ptr);
 			}
 
+			totalsteves++;
 		}
 
 
@@ -507,12 +545,9 @@ int main(int argc, char **argv)
 		}
 
 		memcpy(prevmode7, mode7, MODE7_MAX_SIZE);
-
-		//		if (n % 10 == 0) n++;
 	}
 
 	*ptr++ = 0xff;					// end of stream
-//	*ptr++ = 0xff;
 
 	int total_frames = NUM_FRAMES - start + 1;
 	printf("\ntotal frames = %d\n", total_frames);
@@ -529,7 +564,16 @@ int main(int argc, char **argv)
 	printf("beeb size = %d bytes\n", ptr - beeb);
 	printf("steve byte size = %d\n", totalsteve);
 	printf("steve delta byte size = %d\n", totalsteved);
-	printf("theoretical minimum = %d", totalmin);
+	printf("theoretical minimum = %d\n", totalmin);
+
+	printf("blank frames = %d\n", totalblanks);
+	printf("blank frame bytes = %d (%f)\n", totalblankb, totalblankb / (float)totalblanks);
+	printf("delta frames = %d\n", totaldeltaf);
+	printf("delta frame bytes = %d (%f)\n", totaldeltab, totaldeltab / (float)totaldeltaf);
+	printf("steve frames = %d\n", totalsteves);
+	printf("steve frame bytes = %d (%f)\n", totalsteveb, totalsteveb / (float)totalsteves);
+
+	printf("saved writes = %d\n", savedwrites);
 
 	sprintf(filename, "%s\\%s_beeb.bin", DIRECTORY, FILENAME);
 	file = fopen((const char*)filename, "wb");

@@ -45,10 +45,9 @@ _CHECK_LOAD_BUFFER = FALSE
 
 _ENABLE_CMD_LINE_PARAMS = FALSE
 
-_MUSIC_START_DELAY = 20
+_MUSIC_START_DELAY = 30
 
 _MUS_BUFFER_2K = TRUE		; enable this to use the 'final' version of the music
-
 
 _SHOW_INTRO = TRUE	; probably not needed as a define anymore. 
 
@@ -99,7 +98,10 @@ VID_default_frame_height = 22		; 19
 VID_default_frame_size = (MODE7_char_width * VID_default_frame_height)
 VID_default_frame_addr = MODE7_base_addr + (VID_default_mode7_ypos * MODE7_char_width)
 
-DFS_track_size = (10 * 256)
+DFS_sector_size = 256
+DFS_sectors_per_track = 10
+DFS_sectors_to_load = 10
+DFS_track_size = (DFS_sectors_per_track * DFS_sector_size)
 
 DISK2_drive_no = 2			; should be 2
 DISK1_first_track = 8		; the track at which the video file is located on side 0; all tracks prior to this are reserved for code
@@ -111,7 +113,7 @@ STREAM_buffer_size = (3 * DFS_track_size)
 
 TIMER_latch = 20000-2		; 20ms = 1x vsync :)
 
-FX_frame = 336
+FX_frame = 343				; frame to turn on separated gfx - at apple cut / invert
 
 \ ******************************************************************
 \ *	Define fast (zero page) runtime variables
@@ -148,6 +150,7 @@ GUARD &9F
 .error_flag				SKIP 1
 .vsync_count			SKIP 1
 .decode_lock			SKIP 1
+.sector_no				SKIP 1
 .track_no				SKIP 1
 .load_to_HI				SKIP 1
 .xpos					SKIP 1
@@ -169,8 +172,6 @@ ENDIF
 IF _COUNT_DECRUNCHES
 .decrunch_count			SKIP 2
 ENDIF
-
-.old_irqv				SKIP 2
 
 
 \ ******************************************************************
@@ -194,6 +195,8 @@ decrunch_table = &A00
 tabl_bi = decrunch_table
 tabl_lo = decrunch_table + 52
 tabl_hi = decrunch_table + 104
+
+clock_param = &0000
 
 mus_decrunch_table = &B00
 ;.mus_decrunch_table  SKIP MUS_TABL_SIZE
@@ -282,6 +285,7 @@ ENDIF
 	STA frame_no+1
 	STA error_flag
 	STA decode_lock
+	STA sector_no
 
 	IF _ENABLE_WALLCLOCK
 	STA clock_secs
@@ -303,6 +307,9 @@ ENDIF
 	LDY #HI(music_data)
 	JSR vgm_init_stream
 	BMI read_error
+
+	\\ Zero system clock
+	JSR device_test_start_clock
 
 	\\ Load our entire stream buffer from first track
 
@@ -331,6 +338,9 @@ ENDIF
 	JMP return
 
 	.read_success
+
+	\\ Read system clock
+	JSR device_test_stop_clock
 
 	\\ Start decompressor
 	LDX #LO(STREAM_buffer_start - 1)
@@ -436,7 +446,8 @@ ENDIF
 
 	\\ Is it more than a "track" away?
 	SBC load_to_HI
-	CMP #HI(DFS_track_size)
+	.^sectors_to_load_1
+	CMP #DFS_sectors_to_load
 	BCC not_ready_to_load
 
 	\\ If so, load a track's worth of data into our buffer
@@ -637,6 +648,14 @@ IF _SHOW_VIDEO_DEBUG
 	INY
 	LDA track_no
 	JSR debug_write_hex
+	LDA #'/'
+	STA (debugptr),Y
+	INY
+	CLC
+	LDA sector_no
+	ADC #'0'
+	STA (debugptr),Y
+	INY
 
 	INY
 	LDA load_to_HI
@@ -710,6 +729,9 @@ ENDIF
 	JSR get_decrunched_byte
 	BCS return				; read error
 
+	TAX
+	BEQ skip_line
+
 	CMP #128
 	BCS write_one_char
 
@@ -717,7 +739,6 @@ ENDIF
 	BCS write_many_blocks
 
 	\\ write many spaces
-	TAX
 	LDA #32
 	LDY xpos
 	.space_loop
@@ -748,6 +769,7 @@ ENDIF
 	CPY #MODE7_char_width
 	BCC loop
 
+	.skip_line
 	DEC num_deltas
 	BEQ return
 
@@ -856,6 +878,9 @@ ENDIF
 	\\ Store track no in params block
 	STA osword_params_track
 
+	LDA sector_no
+	STA osword_params_sector
+
 	\\ Update load address in params block
 	LDA load_to_HI
 	STA osword_params_address+1
@@ -871,7 +896,16 @@ ENDIF
 	STA error_flag
 
 	\\ Next track
+	CLC
+	LDA sector_no
+	.sectors_to_load_2
+	ADC #DFS_sectors_to_load
+	CMP #DFS_sectors_per_track
+	BCC same_track
+	SBC #DFS_sectors_per_track
 	INC track_no
+	.same_track
+	STA sector_no
 
 	\\ Which disk?
 	LDA osword_params_drive
@@ -907,7 +941,8 @@ ENDIF
 	\\ Increment our load ptr
 	CLC
 	LDA load_to_HI
-	ADC #HI(DFS_track_size)
+	.sectors_to_load_3
+	ADC #DFS_sectors_to_load
 
 	\\ Have we fallen off the end of the buffer?
 	CMP #HI(STREAM_buffer_end)
@@ -927,6 +962,9 @@ ENDIF
 \ ******************************************************************
 \ * IRQ
 \ ******************************************************************
+
+.old_irqv
+EQUW &FFFF
 
 .irq_handler
 {
@@ -1192,23 +1230,6 @@ IF _ENABLE_WALLCLOCK
 }
 ENDIF
 
-.debug_print_A				; trashes X
-{
-	PHA:PHA
-	LSR A:LSR A:LSR A:LSR A
-	TAX
-	LDA debug_hexchars,X
-	JSR oswrch
-	PLA
-	AND #&0F
-	TAX
-	LDA debug_hexchars,X
-	JSR oswrch
-	LDA #32
-	JSR oswrch
-	PLA
-	RTS
-}
 ENDIF
 
 
@@ -1547,7 +1568,7 @@ EQUB 0				; logical track
 .osword_params_sector
 EQUB 0				; logical sector
 .osword_params_size_sectors
-EQUB &2A			; sector size / number sectors = 256 / 10
+EQUB &20 + DFS_sectors_to_load		; sector size / number sectors = 256 / 10
 .osword_params_return
 EQUB 0				; returned error value
 
@@ -1759,12 +1780,12 @@ ENDIF
 
 IF _HACK_CREDITS
 	jsr creditz
-ENDIF
-
+ELSE
 	LDX #LO(page_ip)
 	LDY #HI(page_ip)
 	JSR scroll_page	
 	LDA #4:JSR wait_key
+ENDIF
 
 	LDX #LO(page_horsenburger)
 	LDY #HI(page_horsenburger)
@@ -1962,6 +1983,48 @@ CREDITS_DATA_PAGE = CREDITS_DATA_ADDR+768
 mode7_font_data = CREDITS_DATA_FONT
 mode7_font_data_second_row = mode7_font_data + 40
 
+.device_test_start_clock
+{
+	LDA #0
+	STA clock_param+0
+	STA clock_param+1
+	STA clock_param+2
+	STA clock_param+3
+	STA clock_param+4
+
+	LDX #LO(clock_param)
+	LDY #HI(clock_param)
+	LDA #&2
+	JSR osword
+
+	RTS
+}
+
+.device_test_stop_clock
+{
+	LDX #LO(clock_param)
+	LDY #HI(clock_param)
+	LDA #&1
+	JSR osword
+
+	\\ Check speed of inital load
+	LDA clock_param
+	CMP #50										; anything < 1/2 second considered fast
+	BCS slow_device
+
+	\\ Fast device detected!
+	\\ Change to load by sector
+
+	LDA #1
+	STA sectors_to_load_1+1
+	STA sectors_to_load_2+1
+	STA sectors_to_load_3+1
+	ORA #&20
+	STA osword_params_size_sectors
+
+	.slow_device
+	RTS	
+}
 
 WORKSPACE_FREE = EXO_buffer_len-(*-EXO_buffer_start)
 
