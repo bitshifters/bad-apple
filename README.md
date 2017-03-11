@@ -10,7 +10,7 @@ See the demo version on [our site](https://bitshifters.github.io/posts/prods/bs-
 
 The Tou Hou Bad Apple [video](https://www.youtube.com/watch?v=G3C-VevI36s) has become a benchmark for pushing retro computing power to the limits. While it has been ported to many other 8-bit platforms, we are now pleased to present the definitive BBC Micro version in glorious Teletext pixel graphics. 
 
-Our version is a full 3m18s of video playback, played back at 25 frames per second in Teletext / MODE 7.
+Our version is a full 3m21s of video playback, played back at 25 frames per second in Teletext / MODE 7.
 
 MODE 7 on the BBC Micro used a [Mullard SAA5050](https://en.wikipedia.org/wiki/Mullard_SAA5050) Teletext display/decoder chip which (apart from from subtle implementation differences) is the same [Teletext](https://en.wikipedia.org/wiki/Teletext) chip used in analogue TVs. It is 40x25 characters, supporting 8 primary colours, with support for text characters and basic graphical effects using control codes embedded into each character row. Support for teletext on the BBC Micro was an original requirement of the BBC's specification for the machine due to their own use of broadcast teletext ([Ceefax](https://en.wikipedia.org/wiki/Ceefax)).
 
