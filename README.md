@@ -27,3 +27,37 @@ For more information on teletext, take a look at the following sites:
 * [Facebook Teletext Group](https://www.facebook.com/groups/TeletextGroup/) - Teletext Community Group
 * [Dan Farrimond's Art](http://danfarrimond.co.uk/) - Awesome teletext art
 * [Horsenburger's Art](http://www.horsenburger.com/) - Addtional Awesome teletext art
+
+## How it works
+
+### The system
+We wanted to create a demo that would work on a standard 32Kb BBC Micro Model B with a single double sided 400Kb disk image. Clearly this would be a challenge given the memory constraints - somehow we'd need to squeeze over 3 minutes of music and video into the available system RAM and disk space.
+
+### The Music
+The music is played back on the BBC Micro using raw register updates every 50Hz (using interrupts) to the SN76489 sound chip. Our musician (Inverse Phase) created the music in Deflemask, and exported a 50Hz 150bpm NTSC 3.58Mhz VGM file (which is essentially a raw stream of register data updates).
+
+This VGM file was then processed using [Simon's VGM conversion tool](https://github.com/simondotm/vgm-converter) to transpose the music to the BBC Micros 4Mhz clock speed (so that it sounds correct because the SN76489 generates frequencies that are based on the system clock signal fed into it). 
+
+The same script also outputs the VGM file in a more compact binary format, which takes up a lot less memory and is easier to compress.
+
+Finally this data was compressed using Exomizer, which reduced the filesize to 10.3Kb. Our first compression attempt reduced the file to 19Kb which wasn't enough to fit it into memory with all of the other code. Our musician came up with a cunning plan to remove vibrato on some of the melody tones which did indeed further reduce the memory usage (to 12Kb), but it sounded plainer. After a long evening of trying to come up with a way to do this, analysing the data, looking for patterns, we discovered that if we just compressed the file using a 2Kb compression dictionary window instead of 1Kb we could get the filesize down to 10Kb and keep all of the nice vibrato!
+
+The music is stored in memory compressed, and simply unpacked on demand as we move through the file.
+
+### The intro
+We wanted to add an intro sequence AS WELL as all the music & video. This presented a few challenges too, because memory AND disk space was running short. So in the end, we loaded up all of the intro sequence as separately compressed mode 7 screen grabs, stored in the same memory locations as disk streaming buffers that are later used by the video decompression system. This means the intro data is trashed once the video player starts but that's ok.
+
+Horsenburger is something of a whizz kid at teletext art (having been an ACTUAL real life teletext artist back in the day) and he kindly offered to help us with some intro screens which I'm sure you'll agree are pretty awesome.
+
+### The credits
+If all of the above wasn't enough (and by the time we'd finished cramming the music the video and the intro in, we were running pretty low on free ram and disk space) we wanted to get some credits in too. These were done about 2 days before the teletext block party event, and we'd put together a quick scrolly effect rendering text using a teletext 'sixels' font.
+
+Inverse Phase spotted the credits and suggested we put some music on there too! MORE stuff to cram in! :)
+
+Well we managed to do that by forcing a quick reload of some data from disk to memory (same memory as the video stream buffer actually), but now but it wasn't scrolling at 50Hz and there was a lot of raster tearing going on - just a side effect of the 6502's speed limits. So one last look at the code, and we managed to hack 10 CPU cycles per character off the update loop, and reduce the scroll area by 2 character lines, and voila - 50Hz smooth scrolling!
+
+### The video playback
+
+[coming soon]
+
+
