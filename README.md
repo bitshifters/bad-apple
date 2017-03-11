@@ -2,7 +2,9 @@
 
 Video codec and player for BBC MODE 7 (aka Teletext)
 
+Coding by [Bitshifters](https://bitshifters.github.io/) - [Kieran](https://github.com/kieranhj) and [Simon](https://github.com/simondotm)
 
+See the demo version on [our site](https://bitshifters.github.io/posts/prods/bs-badapple.html).
 
 **"Bad Apple" - The definitive BBC Micro/Teletext Version**
 
