@@ -1,4 +1,4 @@
-# Bad Apple - Teletext
+# Bad Apple - BBC Micro - Teletext
 
 Video codec and player for BBC MODE 7 (aka Teletext)
 
