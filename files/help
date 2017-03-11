@@ -1,0 +1,24 @@
+Bad Apple Help
+~~~~~~~~~~~~~~
+This demo uses OSWORD &7F to read sectors directly from the disc,
+this is necessary for speed. Therefore the disc image must be kept intact
+- do not copy the files, it won't work!
+
+This demo was designed to be run from a genuine 80T double-sided floppy disc!
+The disc must be in drives 0 and 2, sorry but it is hard coded this way.
+It is recommended that you disable any Tube interfaces.
+
+For RetroClinic DataCentre:
+Load the .DSD disc image into two RAM drives using the *IMPORT -02 <fsp> command
+You must issue the *DTRAP command before !BOOT'ing from the RAM drive.
+
+For MMC devices:
+You will need two separate .SSD images added to your MMB file.
+Load the images into drives 0 and 2 using the following commands:
+*DR.0
+*DIN <disk #1>
+*DR2.
+*DIN <disk #2>
+
+If you experience any bugs or hardware compatibility problems please contact us
+via our website: https://bitshifters.github.io/
