@@ -740,7 +740,7 @@ EQUS  1,"",0
 EQUS  1,"",0
 EQUS  1,"",0
 EQUS  1,"",0
-EQUS  2,"Thankyou for",0
+EQUS  1,"Thank you for",0
 EQUS  7,"Watching!",0
 EQUS  1,"",0
 EQUS  1,"",0
