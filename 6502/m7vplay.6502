@@ -103,9 +103,11 @@ DFS_sectors_per_track = 10
 DFS_sectors_to_load = 10
 DFS_track_size = (DFS_sectors_per_track * DFS_sector_size)
 
-DISK2_drive_no = 2			; should be 2
+DISK1_drive_no = 0			; for loop!
 DISK1_first_track = 8		; the track at which the video file is located on side 0; all tracks prior to this are reserved for code
 DISK1_last_track = 80		; could potentially deduce these from DFS catalog
+
+DISK2_drive_no = 2			; should be 2
 DISK2_first_track = 1
 DISK2_last_track = 80		; doesn't actually matter as data stream should indicate end of buffer
 
@@ -243,26 +245,13 @@ ENDIF
 	\\ Set MODE 7
 	LDA #22: JSR oswrch
 	LDA #7: JSR oswrch
-IF TRUE
+
 	\\ Turn off cursor by directly poking crtc
 	\\ saves a few bytes this way. might not even need SEI/CLI
 	SEI
 	LDA #10: STA &FE00
 	LDA #32: STA &FE01
 	CLI	
-ELSE
-	\\ Must be a simpler way to turn off cursor than this!!
-	LDA #23: JSR oswrch
-	LDA #1: JSR oswrch
-	LDA #0: JSR oswrch
-	JSR oswrch
-	JSR oswrch
-	JSR oswrch
-	JSR oswrch
-	JSR oswrch
-	JSR oswrch
-	JSR oswrch
-ENDIF
 
 	; copy credits data to CREDITS_DATA_ADDR for later use
 	jsr relocate_credits
@@ -309,9 +298,13 @@ ENDIF
 	BMI read_error
 
 	\\ Zero system clock
+	.^main_start_clock
 	JSR device_test_start_clock
 
 	\\ Load our entire stream buffer from first track
+
+	LDA #DISK1_drive_no
+	STA osword_params_drive				; this gets blatted at side change - need to reset for loop!
 
 	LDA #DISK1_first_track
 	STA track_no
@@ -340,6 +333,7 @@ ENDIF
 	.read_success
 
 	\\ Read system clock
+	.^main_stop_clock
 	JSR device_test_stop_clock
 
 	\\ Start decompressor
@@ -411,6 +405,8 @@ ENDIF
 	IF _MUSIC_START_DELAY <> 0
 	{
 		.music_start_code
+		LDA frame_no+1
+		BNE not_ready
 		LDA frame_no
 		CMP #_MUSIC_START_DELAY
 		BNE not_ready
@@ -418,13 +414,6 @@ ENDIF
 		LDX #LO(poll_player)
 		LDY #HI(poll_player)
 		JSR start_eventv
-
-		LDA #JMP_OP			; JMP
-		STA music_start_code
-		LDA #LO(not_ready)
-		STA music_start_code+1
-		LDA #HI(not_ready)
-		STA music_start_code+2
 		.not_ready
 	}
 	ENDIF
@@ -484,8 +473,21 @@ ENDIF
 IF _SHOW_INTRO
 .show_creditz
 	jsr creditz
-	jmp show_creditz
-	; demo does not restart cleanly atm
+
+	{
+		\\ Clear screen without mode change or damaging header
+		LDA #HI(MODE7_base_addr + MODE7_char_width)
+		STA clear_loop+2
+		LDX #0
+		LDA #32
+		.clear_loop
+		STA MODE7_base_addr + MODE7_char_width, X
+		INX
+		BNE clear_loop
+		INC clear_loop + 2
+		BPL clear_loop
+	}
+
 	jmp start_demo
 ENDIF	
 	RTS
@@ -1039,13 +1041,6 @@ EQUW &FFFF
 		LDX #1
 		LDA #MODE7_separated
 		JSR teletexel_init
-
-		LDA #JMP_OP			; JMP
-		STA test_fx_frame
-		LDA #LO(no_fx)
-		STA test_fx_frame+1
-		LDA #HI(no_fx)
-		STA test_fx_frame+2
 		.no_fx
 	}
 
@@ -2023,6 +2018,10 @@ mode7_font_data_second_row = mode7_font_data + 40
 	STA osword_params_size_sectors
 
 	.slow_device
+	LDA #&2C				; BIT absolute
+	STA main_start_clock
+	STA main_stop_clock		; nuke calls to start & stop clock functions
+
 	RTS	
 }
 

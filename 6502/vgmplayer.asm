@@ -33,9 +33,6 @@ ORG VGM_PLAYER_ORG
 
 
 
-.num_to_bit				; look up bit N
-EQUB &01, &02, &04, &08, &10, &20, &40, &80
-
 \ ******************************************************************
 \ *	VGM music player routines
 \ * Plays a RAW format VGM music stream from an Exomiser compressed data stream
