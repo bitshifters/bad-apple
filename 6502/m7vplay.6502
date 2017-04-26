@@ -30,6 +30,8 @@ SEI_OP = $78
 CLI_OP = $58
 NOP_OP = $ea
 JMP_OP = &4C
+BIT_OP = &2C
+JSR_OP = &20
 
 
 \ ******************************************************************
@@ -156,7 +158,7 @@ GUARD &9F
 .track_no				SKIP 1
 .load_to_HI				SKIP 1
 .xpos					SKIP 1
-
+.key_debounce			SKIP 1
 
 IF _ENABLE_WALLCLOCK
 .clock_vsync			SKIP 1
@@ -263,31 +265,33 @@ ENDIF
 
 .start_demo
 
-	\\ Set gfx mode
+	\\ Zero our variables
 	LDX #0
+	STX frame_no
+	STX frame_no+1
+	STX error_flag
+	STX decode_lock
+	STX sector_no
+	STX key_debounce
+	IF _ENABLE_WALLCLOCK
+	STX clock_secs
+	ENDIF
+	IF _COUNT_DECRUNCHES
+	STX decrunch_count
+	STX decrunch_count+1
+	ENDIF
+
+;	LDA #DISK1_drive_no
+	STX osword_params_drive				; this gets blatted at side change - need to reset for loop!
+
+	\\ Set gfx mode
 	LDA #MODE7_graphic_black+7
 	JSR teletexel_init
 
-	\\ Zero our variables
-	LDA #0
-	STA frame_no
-	STA frame_no+1
-	STA error_flag
-	STA decode_lock
-	STA sector_no
-
+	DEX	;LDA #&FF		; save a byte!
+	STX vsync_count
 	IF _ENABLE_WALLCLOCK
-	STA clock_secs
-	ENDIF
-	IF _COUNT_DECRUNCHES
-	STA decrunch_count
-	STA decrunch_count+1
-	ENDIF
-
-	LDA #&FF
-	STA vsync_count
-	IF _ENABLE_WALLCLOCK
-	STA clock_vsync
+	STX clock_vsync
 	ENDIF
 
 	\\ Initialise music
@@ -302,9 +306,6 @@ ENDIF
 	JSR device_test_start_clock
 
 	\\ Load our entire stream buffer from first track
-
-	LDA #DISK1_drive_no
-	STA osword_params_drive				; this gets blatted at side change - need to reset for loop!
 
 	LDA #DISK1_first_track
 	STA track_no
@@ -357,8 +358,8 @@ ENDIF
 	ADC VID_frame_start+1
 	STA VID_frame_end+1
 
-	LDA #19
-	JSR osbyte
+;	LDA #19
+;	JSR osbyte
 
 	\\ Enable irq
 	{
@@ -447,9 +448,28 @@ ENDIF
 	LDA error_flag
 	BNE track_load_error
 
-	; check for keypress W
-;    LDA#&81:LDX#LO(-34):LDY#&FF:JSR &FFF4:TYA:BNE quit
+	; check for keypress Q
+    LDA#&81
+	LDX#LO(-17)
+	LDY#&FF
+	JSR &FFF4
+	CPY key_debounce
+	BEQ go_next_frame
 
+	STY key_debounce
+	CPY #0
+	BEQ go_next_frame
+
+	.key_pressed
+	LDA vgm_player_psg_strobe
+	EOR #(BIT_OP EOR JSR_OP)	; toggle between BIT & JSR opcodes
+	STA vgm_player_psg_strobe
+
+	; sound turned on (JSR)
+	; sound turned off (BIT)
+	JSR deinit_player	; need this to silence voices
+
+	.go_next_frame
 	JMP next_frame
 
 	.track_load_error
@@ -489,8 +509,9 @@ IF _SHOW_INTRO
 	}
 
 	jmp start_demo
-ENDIF	
+ELSE
 	RTS
+ENDIF	
 }
 
 \\ <drive no disk 1> <drive no disk 2> <screen y pos> <frame height>
