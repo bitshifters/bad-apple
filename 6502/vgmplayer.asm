@@ -12,9 +12,11 @@ GUARD &03E0
 \ *	VGM music player data area
 \ ******************************************************************
 .vgm_player_song_title_len	SKIP 1
-.vgm_player_song_title		SKIP VGM_PLAYER_string_max
+; Remove this as we don't need the metadata in this demo but we do need the RAM!
+;.vgm_player_song_title		SKIP VGM_PLAYER_string_max
 .vgm_player_song_author_len	SKIP 1
-.vgm_player_song_author		SKIP VGM_PLAYER_string_max
+; And this!
+;.vgm_player_song_author		SKIP VGM_PLAYER_string_max
 
 ORG VGM_PLAYER_ORG
 
@@ -32,9 +34,6 @@ ORG VGM_PLAYER_ORG
 .vgm_player_packet_offset	SKIP 1		; offset from start of file to beginning of packet data
 
 
-
-.num_to_bit				; look up bit N
-EQUB &01, &02, &04, &08, &10, &20, &40, &80
 
 \ ******************************************************************
 \ *	VGM music player routines
@@ -148,7 +147,8 @@ EQUB &01, &02, &04, &08, &10, &20, &40, &80
 	LDX tmp_msg_idx
 	CPX #VGM_PLAYER_string_max
 	BCS title_loop				; don't write if buffer full
-	STA vgm_player_song_title,X
+; Parse but don't store the metadata as we need the RAM
+;	STA vgm_player_song_title,X
 	INX
 	JMP title_loop
 
@@ -159,7 +159,8 @@ EQUB &01, &02, &04, &08, &10, &20, &40, &80
 	.title_pad_loop
 	CPX #VGM_PLAYER_string_max
 	BCS done_title_padding
-	STA vgm_player_song_title,X
+; Parse but don't store the metadata as we need the RAM
+;	STA vgm_player_song_title,X
 	INX
 	JMP title_pad_loop
 	.done_title_padding
@@ -189,7 +190,8 @@ EQUB &01, &02, &04, &08, &10, &20, &40, &80
 	LDX tmp_msg_idx
 	CPX #VGM_PLAYER_string_max
 	BCS author_loop
-	STA vgm_player_song_author,X	; don't write if buffer full
+; Parse but don't store the metadata as we need the RAM
+;	STA vgm_player_song_author,X	; don't write if buffer full
 	INX
 	JMP author_loop
 
@@ -200,7 +202,8 @@ EQUB &01, &02, &04, &08, &10, &20, &40, &80
 	.author_pad_loop
 	CPX #VGM_PLAYER_string_max
 	BCS done_author_padding
-	STA vgm_player_song_author,X
+; Parse but don't store the metadata as we need the RAM
+;	STA vgm_player_song_author,X
 	INX
 	JMP author_pad_loop
 	.done_author_padding
@@ -278,6 +281,7 @@ EQUB &01, &02, &04, &08, &10, &20, &40, &80
 	JMP _player_end
 
 	.not_sample_end
+	.^vgm_player_psg_strobe
 	JSR psg_strobe
 	PLA:TAY:DEY
 	JMP sound_data_loop
