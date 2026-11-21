@@ -2031,7 +2031,7 @@ mode7_font_data_second_row = mode7_font_data + 40
 	\\ Fast device detected!
 	\\ Change to load by sector
 
-	LDA #1
+	LDA #2
 	STA sectors_to_load_1+1
 	STA sectors_to_load_2+1
 	STA sectors_to_load_3+1
