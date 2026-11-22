@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | GitHub | https://github.com/bitshifters/bad-apple (public) |
-| Local path | D:\beeb\mine\bad-apple (moved from OneDrive\BEEB\Repos\bad-apple in the 2026-11 tidy) |
+| Local path | D:\bitshifters\bad-apple (moved from OneDrive\BEEB\Repos\bad-apple in the 2026-11 tidy) |
 | Branch | master; others: demo-loop, investigation-video-codec, irqv-decode, load-by-sector (all four deleted on GitHub, "gone"), music-on-irq (2017-02-25), wip/2026-11-tidy |
 | Last commit | 2017-04-29: Merge pull request #14 from bitshifters/demo-loop |
 
@@ -17,7 +17,7 @@
 - Pipeline scripts: `rip_mode7_frames.bat`, `compress_mode7_stream.bat`, `make_mode7_disks.bat`.
 
 ## Build and run
-- `make`: runs `make.bat` (Makefile added 2026-11-22): beebasm (`..\..\Bin\beebasm.exe`) assembles `6502\m7vplay.6502` into `badappl\disks\badappl_disk1.ssd`, then `make_mode7_disks.bat badappl` adds the frames with `bin\bbcim` and makes `badappl.dsd`. **Not run on 2026-11-22**: it rewrites the two disc images, which already have uncommitted changes.
+- `make`: runs `make.bat` (Makefile added 2026-11-22): beebasm (`..\Bin\beebasm.exe`) assembles `6502\m7vplay.6502` into `badappl\disks\badappl_disk1.ssd`, then `make_mode7_disks.bat badappl` adds the frames with `bin\bbcim` and makes `badappl.dsd`. **Not run on 2026-11-22**: it rewrites the two disc images, which already have uncommitted changes.
 - `make help` lists targets. `make_badappl.bat` is a near-copy of `make.bat` (uses `call`).
 - Run: `run.bat` -> `run_mode7_disk.bat badappl` launches `..\..\bin\B-em\B-em.exe` on `badappl.dsd` (D:\beeb\Bin is a junction into D:\tools\beeb\Bin; check B-em is there).
 
