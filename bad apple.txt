@@ -1,0 +1,46 @@
+Call it !BadApple
+
+Would like to have a pseudo Ceefax intro / outro
+Pretends to type in page# then searches then displays screen
+
+Can go:
+100 Menu
+101 Engineering Test Page
+BAD Bad Apple video
+900 Credits + Greets
+999 Tech + Links
+
+Need
+- Standalone buildable demo code
+- Ceefax banner for video playback sequence
+- Simple page entry / search / display system
+- The pages of content
+- What about music?!?!  Argh!
+	- Sampled sound (need to implement and find space on disk)
+	- Convert from another chiptune format (can't find one?)
+	- Use Stewart's melody extraction code to generate a tune
+- Must be careful how & when to load data from disk and disk layout
+- Want to try to hide load time if possible
+- Need to get video playback roughly accurate time
+  - Simple rules for vsync counting
+  - Assume decode of a single delta is roughly fixed time so X deltas ~= 1 frame
+  - Calculate fixed cost of full frame decode
+- Do we need double-buffering?
+
+
+2017
+Found a python script that converts midi files to BBC BASIC programs
+Then ripped the output of that into VGM using the modifications to B-Em
+Music isn't great but at least there is a tune to work with..!
+
+Added additional Exomiser library and VGM player from Teletextr
+Now runs with music coming off the vsync event
+Still some timing issues (runs a bit slow vs wall clock)
+And some music sync issues (tune finishes ~10 seconds early - but this could be the tune)
+Also maybe some glitches on the music when IRQ get prioritised above EVENTV
+Maybe move music playback to IRQ vsync since we're trapping that anyway?
+
+Send IP a link to the WIP disk and ask him to write an awesome version of the tune!
+Need an opening & closing screen - ask one of the Teletext folks to design one?
+
+Then Ship It at the Teletext festival
